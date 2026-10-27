@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <RootNamespace>Griffin</RootNamespace>
+    <PackageId>GriffinClient</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Tuomas Hietanen</Authors>
+    <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
+    <Description>Griffin banking-as-a-service client: onboarding (legal persons, claims, verifications), bank accounts, payees, payments, transactions, events, verified webhooks and request signing.</Description>
+    <PackageTags>griffin;baas;banking;payments;fsharp</PackageTags>
+    <PackageProjectUrl>https://github.com/Thorium/GriffinClient</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Thorium/GriffinClient.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>v1.0.0:
+- ADDED: navigation (index, organization), bank products, workflows
+- ADDED: legal persons (create, get, list, rename), claims (Claims module; list, add, delete), verifications, IDV check links, decisions, manual decisions
+- ADDED: bank accounts (open, get, list, close), restrictions (freeze, block, lift), statements (request, get, download), Direct Debit mandates (list, get, cancel)
+- ADDED: Confirmation of Payee and its sandbox simulation, payees (create, get, list, deactivate), payments (create, submit, submissions), admissions, transactions
+- ADDED: events with typed payloads, webhook management, webhook verification (ES512) with Webhook.KeyCache
+- ADDED: RFC 9421 request signing through a pluggable RequestSigner (Ed25519, required in live mode)
+- ADDED: Api.sendAsync / sendRawAsync for any endpoint, Api.downloadAsync, Api.allPagesAsync for pagination
+- ADDED: DUs with Other for Griffin's closed value sets; UkAccount with validation; InvalidRequest before sending
+- ADDED: Page.Unparsed keeps unreadable list items; WebhookRejection says why a delivery failed; KeyCache keeps its keys when a refresh fails
+- ADDED: for C#: GriffinConfig.Create, Money.Gbp, RequestSigner.Create, WebhookRequest.Create, GriffinApi.AllPagesAsync / WithQuery, GetValueOrThrow(Async) with GriffinException
+- ADDED: GriffinFailure.describe; list parameters (claims, country codes, query pairs) take any sequence
+- ADDED: searches (legal persons, bank accounts, payments), account rename, webhook update, Companies House lookup
+- ADDED: card holds, pooled account membership, tell.money open banking consents, Claims.verifiedBankAccount</PackageReleaseNotes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="Json.fs" />
+    <Compile Include="Parse.fs" />
+    <Compile Include="Claims.fs" />
+    <Compile Include="Event.fs" />
+    <Compile Include="MessageSignature.fs" />
+    <Compile Include="Api.fs" />
+    <Compile Include="Webhook.fs" />
+    <Compile Include="CSharp.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.403" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Text.Json" Version="8.0.6" />
+  </ItemGroup>
+
+</Project>

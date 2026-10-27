@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GriffinClient/GriffinClient.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GriffinClient.Tests/GriffinClient.Tests.fsproj" />
+    <Project Path="tests/GriffinClient.CSharpTests/GriffinClient.CSharpTests.csproj" />
+  </Folder>
+</Solution>

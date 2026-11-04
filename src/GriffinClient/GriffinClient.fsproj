@@ -7,7 +7,7 @@
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <RootNamespace>Griffin</RootNamespace>
     <PackageId>GriffinClient</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Tuomas Hietanen</Authors>
     <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
     <Description>Griffin banking-as-a-service client: onboarding (legal persons, claims, verifications), bank accounts, payees, payments, transactions, events, verified webhooks and request signing.</Description>
@@ -16,7 +16,10 @@
     <RepositoryUrl>https://github.com/Thorium/GriffinClient.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>v1.0.0:
+    <PackageReleaseNotes>v1.1.0:
+- ADDED: Ed25519Key.signerOf: a request signer from a PKCS#8 private key, as PEM in any layout or bare base64
+- ADDED: dependency on BouncyCastle.Cryptography, for Ed25519 on every target
+v1.0.0:
 - ADDED: navigation (index, organization), bank products, workflows
 - ADDED: legal persons (create, get, list, rename), claims (Claims module; list, add, delete), verifications, IDV check links, decisions, manual decisions
 - ADDED: bank accounts (open, get, list, close), restrictions (freeze, block, lift), statements (request, get, download), Direct Debit mandates (list, get, cancel)
@@ -43,12 +46,14 @@
     <Compile Include="Claims.fs" />
     <Compile Include="Event.fs" />
     <Compile Include="MessageSignature.fs" />
+    <Compile Include="Ed25519Key.fs" />
     <Compile Include="Api.fs" />
     <Compile Include="Webhook.fs" />
     <Compile Include="CSharp.fs" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="FSharp.Core" Version="8.0.403" />
   </ItemGroup>
 

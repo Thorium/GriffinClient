@@ -37,6 +37,42 @@ let private ed25519Verify (data: byte[]) (signature: byte[]) =
     verifier.BlockUpdate(data, 0, data.Length)
     verifier.VerifySignature signature
 
+/// The same key as PKCS#8, as RFC 9421 appendix B.1.4 gives it.
+let private rfcPkcs8 = "MC4CAQAwBQYDK2VwBCIEIJ+DYvh6SEqVTm50DFtMDoQikTmiCqirVv9mWG9qfSnF"
+
+let private rfcPem = $"-----BEGIN PRIVATE KEY-----\r\n{rfcPkcs8}\r\n-----END PRIVATE KEY-----\r\n"
+
+[<Fact>]
+let ``a signer reads the private key as PEM in any layout or as bare base64`` () =
+    let data = Encoding.UTF8.GetBytes "\"@method\": POST"
+
+    // As pasted into a JSON secret: on one line, or with the line breaks escaped
+    let layouts =
+        [ rfcPem
+          rfcPem.Replace("\r\n", " ")
+          rfcPem.Replace("\r\n", "\\n")
+          rfcPem.Replace("\r\n", "\\r\\n")
+          rfcPkcs8 ]
+
+    for privateKey in layouts do
+        match Ed25519Key.signerOf " test-key-ed25519 " privateKey with
+        | Error failure -> failwith (GriffinFailure.describe failure)
+        | Ok signer ->
+            Assert.Equal("test-key-ed25519", signer.KeyId)
+            let signature = (signer.Sign data ct).Result
+            Assert.Equal(64, signature.Length)
+            Assert.True(ed25519Verify data signature)
+
+[<Fact>]
+let ``an empty key id or anything but an Ed25519 private key is refused`` () =
+    use ec = ECDsa.Create ECCurve.NamedCurves.nistP256
+    let ecKey = ec.ExportPkcs8PrivateKey() |> Convert.ToBase64String
+
+    for keyId, privateKey in [ "hs.test", ecKey; "hs.test", "not a key"; "hs.test", ""; "hs.test", null; "", rfcPkcs8; " ", rfcPkcs8; null, rfcPkcs8 ] do
+        match Ed25519Key.signerOf keyId privateKey with
+        | Error(InvalidRequest _) -> ()
+        | other -> failwith $"%A{other}"
+
 let private ed25519Signer keyId =
     { KeyId = keyId
       Sign = fun data _ -> Task.FromResult(ed25519Sign data) }

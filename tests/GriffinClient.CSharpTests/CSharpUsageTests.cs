@@ -109,6 +109,15 @@ public class CSharpUsageTests
     }
 
     [Fact]
+    public void A_signer_comes_from_a_private_key()
+    {
+        // test-key-ed25519 of RFC 9421 appendix B.1.4.
+        var signer = Ed25519Key.signerOf("hs.csharp", "MC4CAQAwBQYDK2VwBCIEIJ+DYvh6SEqVTm50DFtMDoQikTmiCqirVv9mWG9qfSnF").GetValueOrThrow();
+        Assert.Equal("hs.csharp", signer.KeyId);
+        Assert.Throws<GriffinException>(() => Ed25519Key.signerOf("hs.csharp", "not a key").GetValueOrThrow());
+    }
+
+    [Fact]
     public async Task A_signer_from_a_delegate_signs_requests()
     {
         var handler = new FakeGriffin(_ => (200, """{"organization-url":"/organizations/og.1"}"""));

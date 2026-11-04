@@ -30,7 +30,8 @@ module internal ResultBuilder =
 
 /// Signs Griffin message signatures (RFC 9421, Ed25519). Live organizations must sign every request.
 /// Sign gets the signature base as UTF-8 bytes and returns the raw 64-byte Ed25519 signature. Back it with
-/// a key store or KMS where you can, so the private key stays out of the process.
+/// a key store or KMS where you can, so the private key stays out of the process; Ed25519Key.signerOf makes one from a
+/// private key otherwise.
 type RequestSigner =
     { /// Key id Griffin assigned when the public key was registered (Settings > Message signatures).
       KeyId: string

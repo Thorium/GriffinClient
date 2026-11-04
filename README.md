@@ -219,18 +219,29 @@ A payload newer than your `Griffin-Version` arrives as `Unavailable` with the ve
 ## Request signing (live mode)
 
 Live organizations must sign every request with Ed25519. Register the public key in the Griffin app (Settings >
-Message signatures) and give the client a signer with the key id Griffin assigned:
+Message signatures) and give the client a signer with the key id Griffin assigned.
+
+`Ed25519Key.signerOf` makes one from the PKCS#8 private key, as PEM in any layout (one line, or `\n` escapes as in a
+JSON secret) or bare base64, using BouncyCastle since .NET has no built-in Ed25519. It answers `InvalidRequest` for
+anything but an Ed25519 private key.
+
+```fsharp
+match Ed25519Key.signerOf "hs.…" privateKeyPem with
+| Ok signer ->
+    let client = { Config = { GriffinConfig.create apiKey with Signer = ValueSome signer }; Http = httpClient }
+    ...
+| Error failure -> failwith (GriffinFailure.describe failure)
+```
+
+To keep the private key out of the process, give a key store or KMS as `Sign` instead:
 
 ```fsharp
 let signer =
     { KeyId = "hs.…"
       Sign = fun signatureBase ct -> signWithEd25519 signatureBase ct }   // raw 64-byte signature
-
-let client = { Config = { GriffinConfig.create apiKey with Signer = ValueSome signer }; Http = httpClient }
 ```
 
-.NET has no built-in Ed25519, so `Sign` is yours: a key store, a KMS, or a library such as NSec or
-BouncyCastle. Each request then carries `Date`, `Content-Digest` (sha-512), `Signature-Input` and `Signature`,
+Each request then carries `Date`, `Content-Digest` (sha-512), `Signature-Input` and `Signature`,
 covering `@method`, `@authority`, `@path`, `@query` (when present), `content-type`, `content-length`, `date` and
 `content-digest`, valid for `SignatureLifetime` (300 seconds, Griffin's maximum). Griffin requires content-type
 and content-length on every signed request, so signed GET and DELETE requests send an empty body with
@@ -271,7 +282,8 @@ var first = GriffinApi.WithQuery(account.TransactionsUrl.Value, [KeyValuePair.Cr
 var all = await GriffinApi.AllPagesAsync<Transaction>((link, token) => Api.listTransactionsAsync(client, link, token), first, ct)
     .GetValueOrThrowAsync();
 
-// A request signer from a delegate, and a webhook delivery from ASP.NET's headers.
+// A request signer from a private key or a delegate, and a webhook delivery from ASP.NET's headers.
+var fromKey = Ed25519Key.signerOf("hs.…", privateKeyPem).GetValueOrThrow();
 var signer = RequestSigner.Create("hs.…", (signatureBase, token) => SignWithEd25519Async(signatureBase, token));
 var delivery = Webhook.WebhookRequest.Create("POST", publicHost, publicPath, "",
     Request.Headers.Select(h => KeyValuePair.Create(h.Key, h.Value.ToString())), bodyBytes);

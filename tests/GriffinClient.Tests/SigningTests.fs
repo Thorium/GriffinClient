@@ -38,13 +38,14 @@ let private ed25519Verify (data: byte[]) (signature: byte[]) =
     verifier.VerifySignature signature
 
 /// The same key as PKCS#8, as RFC 9421 appendix B.1.4 gives it.
+[<Literal>]
 let private rfcPkcs8 = "MC4CAQAwBQYDK2VwBCIEIJ+DYvh6SEqVTm50DFtMDoQikTmiCqirVv9mWG9qfSnF"
 
 let private rfcPem = $"-----BEGIN PRIVATE KEY-----\r\n{rfcPkcs8}\r\n-----END PRIVATE KEY-----\r\n"
 
 [<Fact>]
 let ``a signer reads the private key as PEM in any layout or as bare base64`` () =
-    let data = Encoding.UTF8.GetBytes "\"@method\": POST"
+    let data = "\"@method\": POST"B
 
     // As pasted into a JSON secret: on one line, or with the line breaks escaped
     let layouts =

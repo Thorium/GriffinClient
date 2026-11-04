@@ -8,9 +8,10 @@ open Org.BouncyCastle.Crypto.Parameters
 open Org.BouncyCastle.Crypto.Signers
 open Org.BouncyCastle.Security
 
+let private readRegex = Regex @"-----[A-Z ]+-----|\\[rn]|\s"
 let private read (privateKey: string) =
     try
-        let base64 = Regex.Replace(privateKey, @"-----[A-Z ]+-----|\\[rn]|\s", "")
+        let base64 = readRegex.Replace(privateKey, "")
 
         match PrivateKeyFactory.CreateKey(Convert.FromBase64String base64) with
         | :? Ed25519PrivateKeyParameters as key -> Ok key

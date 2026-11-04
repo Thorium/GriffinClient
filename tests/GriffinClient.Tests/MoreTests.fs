@@ -26,6 +26,10 @@ let private organization: Organization =
       PaymentsUrl = ValueNone
       EventsUrl = ValueNone
       WebhooksUrl = ValueNone
+      MembershipsUrl = ValueNone
+      InvitationsUrl = ValueNone
+      ApiKeysUrl = ValueNone
+      OnboardingApplicationsUrl = ValueNone
       Raw = "{}" }
 
 [<Fact>]

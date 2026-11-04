@@ -26,12 +26,17 @@ let private organization: Organization =
       PaymentsUrl = ValueNone
       EventsUrl = ValueNone
       WebhooksUrl = ValueNone
+      MembershipsUrl = ValueNone
+      InvitationsUrl = ValueNone
+      ApiKeysUrl = ValueNone
+      OnboardingApplicationsUrl = ValueNone
       Raw = "{}" }
 
 let private verification: Verification =
     { Url = "/verifications/vn.1"
       LegalPersonUrl = "/legal-persons/lp.1"
       WorkflowUrl = ValueNone
+      ProfilesUrl = ValueNone
       Status = VerificationStatus.ChecksComplete
       RiskRating = ValueNone
       ResourcesUrl = ValueNone

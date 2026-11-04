@@ -256,9 +256,16 @@ let getOwnOrganizationAsync (client: GriffinClient) ct =
 let listBankProductsAsync (client: GriffinClient) (link: string) ct =
     getAsync client link (Parse.page "bank-account-products" Parse.bankProduct) ct
 
+/// A product by BankAccount.ProductUrl or BankProduct.Url, with its notice period.
+let getBankProductAsync (client: GriffinClient) (productUrl: string) ct =
+    getAsync client productUrl Parse.bankProduct ct
+
 /// Organization.WorkflowsUrl: the onboarding workflows a verification can run.
 let listWorkflowsAsync (client: GriffinClient) (link: string) ct =
     getAsync client link (Parse.page "workflows" Parse.workflow) ct
+
+let getWorkflowAsync (client: GriffinClient) (workflowUrl: string) ct =
+    getAsync client workflowUrl Parse.workflow ct
 
 // Legal persons and onboarding
 
@@ -290,6 +297,10 @@ let listLegalPersonsAsync (client: GriffinClient) (link: string) ct =
 let updateLegalPersonAsync (client: GriffinClient) (legalPersonUrl: string) (displayName: string) ct =
     sendAsync client HttpMethod.Put legalPersonUrl {| ``display-name`` = displayName |} Parse.legalPerson ct
 
+/// LegalPerson.HistoryUrl, or a Page's Next: risk ratings, decisions and verifications over time.
+let listLegalPersonHistoryAsync (client: GriffinClient) (link: string) ct =
+    getAsync client link (Parse.page "legal-person-history" Parse.legalPersonHistoryEvent) ct
+
 /// Adds or replaces one claim of a legal person (LegalPerson.ClaimsUrl), e.g. to correct a declined one.
 let addClaimAsync (client: GriffinClient) (claimsUrl: string) (claim: Claim) ct =
     postAsync client claimsUrl (Claim.toJson claim) ignore ct
@@ -318,6 +329,10 @@ let listVerificationsAsync (client: GriffinClient) (link: string) ct =
 /// customer to IdvCheck.Url; Griffin publishes the link with the verification-resource-created event.
 let getIdvChecksAsync (client: GriffinClient) (resourcesUrl: string) ct =
     getAsync client resourcesUrl Parse.idvChecks ct
+
+/// The claims a verification used for its subject and related parties (Verification.ProfilesUrl).
+let getVerificationProfilesAsync (client: GriffinClient) (profilesUrl: string) ct =
+    getAsync client profilesUrl Parse.verificationProfiles ct
 
 /// LegalPerson.DecisionsUrl, or a Page's Next: every decision, newest first.
 let listDecisionsAsync (client: GriffinClient) (link: string) ct =
@@ -359,6 +374,35 @@ let openBankAccountAsync
            ``beneficiary-url`` = ValueOption.toObj beneficiaryUrl |}
 
     postAsync client productAccountsUrl body Parse.bankAccount ct
+
+/// Opens an account in an organization (Organization.BankAccountsUrl) by its kind rather than a product. It starts
+/// Opening, as openBankAccountAsync's do.
+let openAccountAsync (client: GriffinClient) (bankAccountsUrl: string) (displayName: string voption) (account: NewBankAccount) ct =
+    let holding (productType: string) (held: AccountHolding) =
+        match held with
+        | AccountHolding.Pooled owner -> [ "bank-product-type", box productType; "pooled-funds", box true; "owner-url", box (ValueOption.toObj owner) ]
+        | AccountHolding.ForBeneficiary(beneficiary, owner) ->
+            [ "bank-product-type", box productType
+              "pooled-funds", box false
+              "beneficiary-url", box beneficiary
+              "owner-url", box (ValueOption.toObj owner) ]
+
+    let fields =
+        match account with
+        | NewBankAccount.Embedded owner -> [ "bank-product-type", box "embedded-account"; "owner-url", box owner ]
+        | NewBankAccount.Operational -> [ "bank-product-type", box "operational-account" ]
+        | NewBankAccount.EasyAccessSavings owner ->
+            [ "bank-product-type", box "savings-account"; "savings-type", box "easy-access"; "owner-url", box owner ]
+        | NewBankAccount.BareTrustSavings -> [ "bank-product-type", box "savings-account"; "savings-type", box "bare-trust" ]
+        | NewBankAccount.ClientMoney held -> holding "client-money-account" held
+        | NewBankAccount.Safeguarding held -> holding "safeguarding-account" held
+
+    let body =
+        ("display-name", box (ValueOption.toObj displayName)) :: fields
+        |> List.filter (fun (_, value) -> not (isNull value))
+        |> dict
+
+    postAsync client bankAccountsUrl body Parse.bankAccount ct
 
 let getBankAccountAsync (client: GriffinClient) (accountUrl: string) ct =
     getAsync client accountUrl Parse.bankAccount ct
@@ -471,6 +515,24 @@ let listRestrictionsAsync (client: GriffinClient) (link: string) ct =
 
 let getRestrictionAsync (client: GriffinClient) (restrictionUrl: string) ct =
     getAsync client restrictionUrl Parse.restriction ct
+
+/// Changes an active restriction (Restriction.UpdateUrl); ValueNone leaves a value as it is. Griffin requires notes.
+let updateRestrictionAsync
+    (client: GriffinClient)
+    (updateUrl: string)
+    (restrictionType: RestrictionType voption)
+    (reason: RestrictionReason voption)
+    (legalStatus: RestrictionLegalStatus voption)
+    (notes: string)
+    ct
+    =
+    let body =
+        {| ``restriction-type`` = restrictionType |> ValueOption.map _.Value |> ValueOption.toObj
+           ``restriction-reason-code`` = reason |> ValueOption.map _.Value |> ValueOption.toObj
+           ``restriction-legal-status`` = legalStatus |> ValueOption.map _.Value |> ValueOption.toObj
+           notes = notes |}
+
+    postAsync client updateUrl body Parse.restriction ct
 
 /// Lifts an active restriction (Restriction.LiftUrl).
 let liftRestrictionAsync (client: GriffinClient) (liftUrl: string) (notes: string) ct =
@@ -596,6 +658,11 @@ let listPayeesAsync (client: GriffinClient) (link: string) ct =
 let deactivatePayeeAsync (client: GriffinClient) (payeeUrl: string) ct =
     sendAsync client patch payeeUrl {| ``payee-status`` = PayeeStatus.Deactivated.Value |} Parse.payee ct
 
+/// Records a Confirmation of Payee check on an existing payee, which an organization that requires checks needs before
+/// paying it (PaymentRefusal.CopRequired).
+let attachCopToPayeeAsync (client: GriffinClient) (payeeUrl: string) (copRequestUrl: string) ct =
+    sendAsync client patch payeeUrl {| ``cop-request-url`` = copRequestUrl |} Parse.payee ct
+
 // Payments
 
 let private creditorBody: Creditor -> obj =
@@ -640,10 +707,15 @@ let createPaymentAsync
 let submitPaymentAsync (client: GriffinClient) (submissionsUrl: string) (scheme: PaymentScheme) ct =
     postAsync client submissionsUrl {| ``payment-scheme`` = scheme.Value |} Parse.submission ct
 
+/// Records why a created payment was rejected (Griffin's "Update payment"); Payment.RejectionReason and RejectedAt
+/// then show it. Griffin's reference does not say which payments accept this.
+let rejectPaymentAsync (client: GriffinClient) (paymentUrl: string) (reason: string) ct =
+    sendAsync client patch paymentUrl {| ``rejection-reason`` = reason |} ignore ct
+
 let getPaymentAsync (client: GriffinClient) (paymentUrl: string) ct =
     getAsync client paymentUrl Parse.payment ct
 
-/// BankAccount.PaymentsUrl or Organization.PaymentsUrl, or a Page's Next.
+/// BankAccount.PaymentsUrl, Organization.PaymentsUrl or Mandate.PaymentsUrl (a mandate's collections), or a Page's Next.
 let listPaymentsAsync (client: GriffinClient) (link: string) ct =
     getAsync client link (Parse.page "payments" Parse.payment) ct
 
@@ -712,6 +784,113 @@ let deactivateWebhookAsync (client: GriffinClient) (deactivateUrl: string) ct =
 /// Asks Griffin to deliver a test event to the webhook (WebhookEndpoint.TestUrl).
 let testWebhookAsync (client: GriffinClient) (testUrl: string) ct = postAsync client testUrl null ignore ct
 
+/// How the latest test delivery went (WebhookEndpoint.TestUrl).
+let getWebhookTestStatusAsync (client: GriffinClient) (testUrl: string) ct =
+    getAsync client testUrl Parse.webhookTestStatus ct
+
 /// The keys Griffin signs webhook deliveries with.
 let getWebhookKeysAsync (client: GriffinClient) ct =
     getAsync client "/security/public-keys" Parse.webhookKeys ct
+
+/// Griffin's debug endpoint for request signatures: sends a signed request with method (GET, POST, PUT, PATCH or
+/// DELETE) and says whether the signature was accepted. A rejected one is ApiError(401, _).
+let verifyRequestSignatureAsync (client: GriffinClient) (method: HttpMethod) ct =
+    sendAsync client method "/security/message-signature/verify" null Parse.signatureCheck ct
+
+// Reliance onboarding
+
+let private subjectAssociation (roles: SubjectRole list) =
+    roles
+    |> List.map (function
+        | SubjectRole.Director companiesHouseUrl ->
+            "director", box {| ``companies-house-url`` = ValueOption.toObj companiesHouseUrl |}
+        | SubjectRole.Psc(ownershipPercent, companiesHouseUrl) ->
+            "psc",
+            box
+                {| ``ownership-percent`` = ValueOption.toObj ownershipPercent
+                   ``companies-house-url`` = ValueOption.toObj companiesHouseUrl |}
+        | SubjectRole.SeniorManager -> "senior-manager", obj ()
+        | SubjectRole.GoverningBodyMember -> "governing-body-member", obj ()
+        | SubjectRole.SeniorManagerFunctionHolder -> "senior-manager-function-holder", obj ()
+        | SubjectRole.RoleTitles titles -> "role-titles", box (Array.ofSeq titles))
+    |> dict
+
+/// Creates a legal person, verifies them and decides, as one application (Organization.OnboardingApplicationsUrl),
+/// for organizations that onboard under reliance. The reply has only the Url and Status: follow it with
+/// getOnboardingApplicationAsync or the onboarding-application-updated event.
+let createOnboardingApplicationAsync
+    (client: GriffinClient)
+    (applicationsUrl: string)
+    (workflowUrl: string)
+    (subject: OnboardingProfile)
+    (related: seq<RelatedProfile>)
+    ct
+    =
+    let body =
+        {| ``workflow-url`` = workflowUrl
+           ``subject-profile`` =
+            {| ``display-name`` = subject.DisplayName
+               claims = subject.Claims |> Seq.map Claim.toJson |> Array.ofSeq |}
+           ``related-profiles`` =
+            related
+            |> Seq.map (fun profile ->
+                {| ``display-name`` = profile.DisplayName
+                   ``subject-association`` = subjectAssociation profile.Roles
+                   claims = profile.Claims |> Seq.map Claim.toJson |> Array.ofSeq |})
+            |> Array.ofSeq |}
+
+    postAsync client applicationsUrl body Parse.onboardingApplication ct
+
+let getOnboardingApplicationAsync (client: GriffinClient) (applicationUrl: string) ct =
+    getAsync client applicationUrl Parse.onboardingApplication ct
+
+// API keys
+
+/// Index.ApiKeyUrl for the key making this request, or ApiKey.Url. Griffin never shows the secret again.
+let getApiKeyAsync (client: GriffinClient) (apiKeyUrl: string) ct =
+    getAsync client apiKeyUrl Parse.apiKey ct
+
+/// Organization.ApiKeysUrl or User.ApiKeysUrl, or a Page's Next.
+let listApiKeysAsync (client: GriffinClient) (link: string) ct =
+    getAsync client link (Parse.page "api-keys" Parse.apiKey) ct
+
+/// Creates a key (Organization.ApiKeysUrl). This reply is the only time its secret is shown.
+let createApiKeyAsync (client: GriffinClient) (apiKeysUrl: string) (name: string) ct =
+    postAsync client apiKeysUrl {| ``api-key-name`` = name |} Parse.createdApiKey ct
+
+/// Revokes a key (ApiKey.Url).
+let deleteApiKeyAsync (client: GriffinClient) (apiKeyUrl: string) ct =
+    sendAsync client HttpMethod.Delete apiKeyUrl null ignore ct
+
+// Team: users, roles, memberships and invitations
+
+let getUserAsync (client: GriffinClient) (userUrl: string) ct = getAsync client userUrl Parse.user ct
+
+/// Index.RolesUrl: every role a membership can be given.
+let listRolesAsync (client: GriffinClient) (rolesUrl: string) ct = getAsync client rolesUrl Parse.roles ct
+
+let getRoleAsync (client: GriffinClient) (roleUrl: string) ct = getAsync client roleUrl Parse.role ct
+
+/// Organization.MembershipsUrl or User.MembershipsUrl, or a Page's Next.
+let listMembershipsAsync (client: GriffinClient) (link: string) ct =
+    getAsync client link (Parse.page "memberships" Parse.membership) ct
+
+let getMembershipAsync (client: GriffinClient) (membershipUrl: string) ct =
+    getAsync client membershipUrl Parse.membership ct
+
+/// Removes a user from the organization.
+let deleteMembershipAsync (client: GriffinClient) (membershipUrl: string) ct =
+    sendAsync client HttpMethod.Delete membershipUrl null ignore ct
+
+/// Membership.RolesUrl: the roles a membership has now.
+let listMembershipRolesAsync (client: GriffinClient) (rolesUrl: string) ct =
+    getAsync client rolesUrl Parse.roles ct
+
+/// Replaces a membership's roles (Membership.RolesUrl) and returns them. Griffin answers 422 for a role it does not
+/// offer the organization.
+let setMembershipRolesAsync (client: GriffinClient) (rolesUrl: string) (roleUrls: seq<string>) ct =
+    sendAsync client HttpMethod.Put rolesUrl {| ``role-urls`` = Array.ofSeq roleUrls |} Parse.roles ct
+
+/// Emails an invitation to join the organization (Organization.InvitationsUrl).
+let createInvitationAsync (client: GriffinClient) (invitationsUrl: string) (emailAddress: string) ct =
+    postAsync client invitationsUrl {| ``email-address`` = emailAddress |} ignore ct

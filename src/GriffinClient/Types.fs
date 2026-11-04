@@ -82,8 +82,20 @@ type GriffinConfig with
     /// For C#: GriffinConfig.create.
     static member Create(apiKey: string) = GriffinConfig.create apiKey
 
-/// Configuration plus the HttpClient used for every call to Griffin. The caller owns the HttpClient.
+/// Configuration plus the HttpClient used for every call to Griffin. The caller owns the HttpClient, which shouldn't follow redirects:
+/// see GriffinClient.createHttpClient.
 type GriffinClient = { Config: GriffinConfig; Http: HttpClient }
+
+module GriffinClient =
+
+    /// An HttpClient that doesn't follow redirects, for GriffinClient.Http. One that does sends request signatures, and on a 307 the body,
+    /// to wherever a redirect points; .NET drops only the API key. Keep it for the application's lifetime.
+    let createHttpClient () =
+#if NETSTANDARD
+        new HttpClient(new HttpClientHandler(UseCookies = false, AllowAutoRedirect = false))
+#else
+        new HttpClient(new SocketsHttpHandler(UseCookies = false, PooledConnectionLifetime = System.TimeSpan.FromMinutes 5., AllowAutoRedirect = false))
+#endif
 
 /// An amount; Griffin sends the value as a decimal string.
 type Money = { Currency: string; Value: decimal }
@@ -184,6 +196,55 @@ module GriffinFailure =
         | SigningFailed e -> $"Signing failed: {e.Message}"
         | ForeignLink link -> $"Not followed: {link} is outside BaseUrl"
         | WebhookRejected rejection -> $"Webhook rejected: %A{rejection}"
+
+/// Why Griffin refused to create or submit a payment (HTTP 422).
+[<RequireQualifiedAccess>]
+type PaymentRefusal =
+    | AccountRestricted
+    | PayeeNotActive
+    | SameDebtorAndBeneficiary
+    | MixedCurrencies
+    | MixedOrganizations
+    /// Griffin suggests another scheme.
+    | AmountExceedsSchemeLimit
+    | BankAccountClosed
+    /// Griffin suggests submitting again once the account has the funds.
+    | InsufficientFunds
+    | PayeeDeactivated
+    | NoPostalAddress
+    | ProfileNotFound
+    /// The organization requires a Confirmation of Payee check attached to a payee (Api.attachCopToPayeeAsync).
+    | CopRequired
+    | Other of string
+
+    static member private Names =
+        [ AccountRestricted, "account-restricted"
+          PayeeNotActive, "payee-not-active"
+          SameDebtorAndBeneficiary, "same-debtor-and-beneficiary"
+          MixedCurrencies, "mixed-currencies"
+          MixedOrganizations, "mixed-organizations"
+          AmountExceedsSchemeLimit, "payment-amount-exceeds-scheme-limit"
+          BankAccountClosed, "bank-account-closed"
+          InsufficientFunds, "insufficient-funds"
+          PayeeDeactivated, "payee-deactivated"
+          NoPostalAddress, "no-postal-address"
+          ProfileNotFound, "profile-not-found"
+          CopRequired, "cop-required" ]
+
+    member this.Value = Wire.name PaymentRefusal.Names (function Other s -> s | _ -> "") this
+    static member Parse text = Wire.parse PaymentRefusal.Names Other text
+
+module PaymentRefusal =
+
+    /// The refusal in a failure: a 422 whose first error has a code, or else a title. ValueNone for anything else.
+    let ofFailure (failure: GriffinFailure) =
+        match failure with
+        | ApiError(422, first :: _) ->
+            first.Code
+            |> ValueOption.defaultValue first.Title
+            |> PaymentRefusal.Parse
+            |> ValueSome
+        | _ -> ValueNone
 
 /// A list item that did not parse, kept so one unexpected item does not fail the whole list.
 type UnparsedItem = { Reason: string; Raw: string }
@@ -714,8 +775,59 @@ type WebhookState =
     member this.Value = Wire.name WebhookState.Names (function Other s -> s | Active | Inactive -> "") this
     static member Parse text = Wire.parse WebhookState.Names Other text
 
+[<RequireQualifiedAccess>]
+type SavingsType =
+    | EasyAccess
+    | BareTrust
+    | Other of string
+
+    static member private Names = [ EasyAccess, "easy-access"; BareTrust, "bare-trust" ]
+    member this.Value = Wire.name SavingsType.Names (function Other s -> s | EasyAccess | BareTrust -> "") this
+    static member Parse text = Wire.parse SavingsType.Names Other text
+
+[<RequireQualifiedAccess>]
+type ClientMoneyType =
+    | DesignatedClientFund
+    | DesignatedClientMoney
+    | GeneralClientMoney
+    | Other of string
+
+    static member private Names =
+        [ DesignatedClientFund, "designated-client-fund"
+          DesignatedClientMoney, "designated-client-money"
+          GeneralClientMoney, "general-client-money" ]
+
+    member this.Value = Wire.name ClientMoneyType.Names (function Other s -> s | _ -> "") this
+    static member Parse text = Wire.parse ClientMoneyType.Names Other text
+
+[<RequireQualifiedAccess>]
+type PaymentType =
+    | CreditTransfer
+    /// A collection against a mandate; Payment.MandateUrl names it.
+    | DirectDebit
+    | Other of string
+
+    static member private Names = [ CreditTransfer, "credit-transfer"; DirectDebit, "direct-debit" ]
+    member this.Value = Wire.name PaymentType.Names (function Other s -> s | CreditTransfer | DirectDebit -> "") this
+    static member Parse text = Wire.parse PaymentType.Names Other text
+
+/// How long a product makes a withdrawal wait. Anything but InstantAccess leaves a submission Scheduled until its
+/// ScheduledAt.
+[<RequireQualifiedAccess>]
+type NoticePeriod =
+    | InstantAccess
+    | CalendarDays of days: int
+    | SameOrNextDay
+    | Other of string
+
 type Index =
     { OrganizationUrl: string
+      /// Pass a user's URL under it to Api.getUserAsync.
+      UsersUrl: string voption
+      /// Api.listRolesAsync.
+      RolesUrl: string voption
+      /// The API key making this request (Api.getApiKeyAsync).
+      ApiKeyUrl: string voption
       Raw: string }
 
 type Organization =
@@ -731,6 +843,12 @@ type Organization =
       PaymentsUrl: string voption
       EventsUrl: string voption
       WebhooksUrl: string voption
+      MembershipsUrl: string voption
+      /// Where Api.createInvitationAsync posts.
+      InvitationsUrl: string voption
+      ApiKeysUrl: string voption
+      /// Where Api.createOnboardingApplicationAsync posts; reliance organizations only.
+      OnboardingApplicationsUrl: string voption
       Raw: string }
 
     /// Where Api.searchLegalPersonsAsync posts.
@@ -745,6 +863,16 @@ type Organization =
     /// Where Api.registerTellConsentAsync posts.
     member this.TellConsentsUrl = this.Url + "/open-banking/tell-consents"
 
+/// What accounts on a product can do over each scheme. Griffin sends over Faster Payments and book transfers only;
+/// book transfers are not listed here.
+type ProductSchemes =
+    { FasterPaymentsInbound: bool
+      FasterPaymentsOutbound: bool
+      ChapsInbound: bool
+      BacsDirectCreditsInbound: bool
+      /// Originators can collect Direct Debits from the account.
+      BacsDirectDebitsInbound: bool }
+
 type BankProduct =
     { Url: string
       DisplayName: string
@@ -753,6 +881,8 @@ type BankProduct =
       FundingType: FundingType voption
       OwnerType: LegalPersonType voption
       Status: string voption
+      NoticePeriod: NoticePeriod voption
+      Schemes: ProductSchemes voption
       /// POST here to open an account against the product.
       AccountsUrl: string
       Raw: string }
@@ -760,10 +890,13 @@ type BankProduct =
 type Workflow =
     { Url: string
       DisplayName: string
+      Description: string voption
       LegalPersonType: LegalPersonType
       Disabled: bool
       /// Claim types the workflow needs for its legal person type.
       RequiredClaimTypes: string list
+      /// e.g. "allow-zero-directors".
+      Rules: string list
       Raw: string }
 
 type DeclineReason =
@@ -786,7 +919,9 @@ type LegalPerson =
     { Url: string
       DisplayName: string
       LegalPersonType: LegalPersonType
+      LegalName: string voption
       Status: LegalPersonStatus voption
+      StatusChangedAt: DateTimeOffset voption
       ApplicationStatus: ApplicationStatus voption
       LatestDecision: Decision voption
       ClaimsUrl: string voption
@@ -796,6 +931,9 @@ type LegalPerson =
       CreatedAt: DateTimeOffset voption
       Raw: string }
 
+    /// Risk ratings, decisions and verifications over time (Api.listLegalPersonHistoryAsync).
+    member this.HistoryUrl = this.Url + "/history"
+
 type Verification =
     { Url: string
       LegalPersonUrl: string
@@ -803,6 +941,7 @@ type Verification =
       Status: VerificationStatus
       RiskRating: RiskRating voption
       ResourcesUrl: string voption
+      ProfilesUrl: string voption
       CreatedAt: DateTimeOffset voption
       Raw: string }
 
@@ -827,11 +966,17 @@ type BankAccount =
       DisplayName: string
       Status: AccountStatus
       ProductType: BankProductType voption
+      SavingsType: SavingsType voption
+      ClientMoneyType: ClientMoneyType voption
+      /// The organization's primary account.
+      PrimaryAccount: bool
       Balance: Money voption
       AvailableBalance: Money voption
+      AccruedInterest: Money voption
       BankAddresses: BankAddress list
       OwnerUrl: string voption
       BeneficiaryUrl: string voption
+      ControllerUrl: string voption
       PaymentsUrl: string voption
       TransactionsUrl: string voption
       CloseUrl: string voption
@@ -846,6 +991,8 @@ type BankAccount =
       MandatesUrl: string voption
       PooledFunds: bool
       Restricted: bool
+      OpenedAt: DateTimeOffset voption
+      ClosedAt: DateTimeOffset voption
       CreatedAt: DateTimeOffset voption
       Raw: string }
 
@@ -952,10 +1099,16 @@ type Creditor =
 type Payment =
     { Url: string
       Direction: PaymentDirection voption
+      PaymentType: PaymentType voption
       Amount: Money
       Reference: string voption
+      /// The Direct Debit mandate a collection was made against.
+      MandateUrl: string voption
       SubmissionsUrl: string voption
       LatestSubmissionUrl: string voption
+      AdmissionsUrl: string voption
+      RejectionReason: string voption
+      RejectedAt: DateTimeOffset voption
       CreatedAt: DateTimeOffset voption
       Raw: string }
 
@@ -965,9 +1118,13 @@ type Submission =
       AccountUrl: string voption
       Status: SubmissionStatus
       StatusReason: string voption
+      /// A Scheduled submission's earliest processing time, from the account's withdrawal schedule. Griffin sets it;
+      /// a request cannot choose it.
+      ScheduledAt: DateTimeOffset voption
       Scheme: PaymentScheme voption
       EndToEndId: string voption
       SchemeStatusCode: string voption
+      UniqueSchemeIdentifier: string voption
       CreatedAt: DateTimeOffset voption
       Raw: string }
 
@@ -995,6 +1152,7 @@ type Transaction =
       PaymentUrl: string voption
       EffectiveAt: DateTimeOffset voption
       PostedAt: DateTimeOffset voption
+      ProcessedAt: DateTimeOffset voption
       Raw: string }
 
 /// A registered webhook: where Griffin delivers the organization's events.
@@ -1124,6 +1282,141 @@ type TellConsent =
 
     /// Where Api.revokeTellConsentAsync posts.
     member this.RevokeUrl = this.Url + "/actions/revoke"
+
+/// What a request to Griffin's message signature debug endpoint found.
+type SignatureCheck = { Message: string; Busy: bool }
+
+/// The latest test delivery of a webhook (Api.getWebhookTestStatusAsync).
+type WebhookTestStatus =
+    { /// "default" before any test has finished, "complete" after one has.
+      Status: string
+      HttpStatus: int voption
+      /// e.g. "webhook-timeout".
+      ErrorCode: string voption
+      UpdatedAt: DateTimeOffset voption }
+
+/// An API key as Griffin lists it, without its secret.
+type ApiKey =
+    { Url: string
+      Name: string
+      Live: bool
+      OrganizationUrl: string
+      UserUrl: string
+      CreatedAt: DateTimeOffset voption
+      Raw: string }
+
+/// A new API key with its secret, which Griffin shows only this once. Printing it (ToString, %A) hides the secret, and
+/// Key.Raw is empty, because the reply it comes from holds the secret too.
+[<StructuredFormatDisplay("{Display}")>]
+type CreatedApiKey =
+    { Key: ApiKey
+      Secret: string }
+
+    member this.Display = $"CreatedApiKey {{ Url = %s{this.Key.Url}; Name = %s{this.Key.Name}; Secret = *** }}"
+    override this.ToString() = this.Display
+
+type Role =
+    { Url: string
+      DisplayName: string
+      Description: string
+      Category: string voption }
+
+type User =
+    { Url: string
+      Email: string
+      Username: string
+      GivenName: string voption
+      Surname: string voption
+      ApiKeysUrl: string voption
+      MembershipsUrl: string voption
+      Raw: string }
+
+/// A user's place in an organization, with the roles that decide what they can do.
+type Membership =
+    { Url: string
+      RolesUrl: string
+      OrganizationUrl: string voption
+      User: User voption
+      Roles: Role list
+      CreatedAt: DateTimeOffset voption
+      Raw: string }
+
+/// What happened in a legal person's history.
+[<RequireQualifiedAccess>]
+type LegalPersonHistoryKind =
+    | RiskRatingRegistered of rating: RiskRating * previous: RiskRating voption * notes: string voption
+    | DecisionCreated of Decision
+    | VerificationCreated of verificationUrl: string * workflowUrl: string voption
+    /// An event type this client does not read; Raw on the event has it.
+    | Other of eventType: string
+
+type LegalPersonHistoryEvent =
+    { Kind: LegalPersonHistoryKind
+      Timestamp: DateTimeOffset voption
+      Raw: string }
+
+/// A claim a verification used, as the profile lists it.
+type ProfileClaim = { ClaimType: string; Raw: string }
+
+/// The claims a verification used for one legal person.
+type VerificationProfile =
+    { DisplayName: string
+      LegalPersonUrl: string
+      LegalPersonType: LegalPersonType
+      LegalName: string voption
+      CurrentClaims: ProfileClaim list }
+
+type VerificationProfiles =
+    { Subject: VerificationProfile
+      /// Directors, persons with significant control and others connected to the subject.
+      RelatedParties: VerificationProfile list
+      Raw: string }
+
+/// The state of a reliance onboarding application.
+[<RequireQualifiedAccess>]
+type OnboardingStatus =
+    | Submitted
+    | Processing
+    | Errored of reasons: string list
+    | Complete of outcome: DecisionOutcome * declineReasons: DeclineReason list
+    | Other of string
+
+/// A reliance onboarding application: the legal person, verification and decision in one request.
+type OnboardingApplication =
+    { Url: string
+      Status: OnboardingStatus
+      /// Absent from the reply that creates the application; fetch it with Api.getOnboardingApplicationAsync.
+      WorkflowUrl: string voption
+      LegalPersonUrl: string voption
+      VerificationUrl: string voption
+      CreatedAt: DateTimeOffset voption
+      Raw: string }
+
+/// An ID document and selfie check changing, from a verification-resource event.
+type VerificationResource =
+    { ResourceId: string voption
+      VerificationUrl: string
+      LegalPersonUrl: string voption
+      Status: IdvCheckStatus voption
+      IdvCheckUrl: string voption
+      ExpiresAt: DateTimeOffset voption
+      Raw: string }
+
+/// Who a client money or safeguarding account holds funds for.
+[<RequireQualifiedAccess>]
+type AccountHolding =
+    | Pooled of ownerUrl: string voption
+    | ForBeneficiary of beneficiaryUrl: string * ownerUrl: string voption
+
+/// An account to open in an organization (Api.openAccountAsync), without naming a product.
+[<RequireQualifiedAccess>]
+type NewBankAccount =
+    | Embedded of ownerUrl: string
+    | Operational
+    | EasyAccessSavings of ownerUrl: string
+    | BareTrustSavings
+    | ClientMoney of AccountHolding
+    | Safeguarding of AccountHolding
 
 /// A webhook verification key from Griffin's JWKS endpoint.
 type WebhookKey =

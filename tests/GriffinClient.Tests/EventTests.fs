@@ -42,8 +42,8 @@ let ``a payload newer than the request version is Unavailable with the version i
 
 [<Fact>]
 let ``unknown event types and unparseable known payloads become Other`` () =
-    match payloadOf (event "onboarding-application-created" """{"x":1}""") with
-    | Other("onboarding-application-created", json) -> Assert.Contains("\"x\"", json)
+    match payloadOf (event "something-griffin-adds" """{"x":1}""") with
+    | Other("something-griffin-adds", json) -> Assert.Contains("\"x\"", json)
     | other -> failwith $"%A{other}"
 
     match payloadOf (event "submission-updated" """{"unexpected":true}""") with

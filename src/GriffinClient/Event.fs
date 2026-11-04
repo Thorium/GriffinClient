@@ -16,6 +16,12 @@ type EventPayload =
     | VerificationCreated of Verification
     | VerificationUpdated of Verification
     | DecisionCreated of Decision
+    | VerificationResourceCreated of VerificationResource
+    | VerificationResourceUpdated of VerificationResource
+    | OnboardingApplicationCreated of OnboardingApplication
+    | OnboardingApplicationUpdated of OnboardingApplication
+    /// What Api.testWebhookAsync delivers.
+    | TestEvent
     /// The payload needs a newer Griffin-Version than the request (or webhook) used.
     | Unavailable of requiredApiVersion: string
     /// Another event type, or a known one whose payload did not parse; payload is its JSON text.
@@ -57,6 +63,11 @@ module Event =
                 | "verification-created" -> VerificationCreated(Parse.verification payload)
                 | "verification-updated" -> VerificationUpdated(Parse.verification payload)
                 | "decision-created" -> DecisionCreated(Parse.decision payload)
+                | "verification-resource-created" -> VerificationResourceCreated(Parse.verificationResource payload)
+                | "verification-resource-updated" -> VerificationResourceUpdated(Parse.verificationResource payload)
+                | "onboarding-application-created" -> OnboardingApplicationCreated(Parse.onboardingApplication payload)
+                | "onboarding-application-updated" -> OnboardingApplicationUpdated(Parse.onboardingApplication payload)
+                | "test-event" -> TestEvent
                 | other -> Other(other, payload.GetRawText())
             with Json.InvalidJson _ ->
                 Other(eventType, payload.GetRawText())

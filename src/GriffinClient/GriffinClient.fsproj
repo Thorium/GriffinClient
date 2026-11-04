@@ -7,16 +7,28 @@
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <RootNamespace>Griffin</RootNamespace>
     <PackageId>GriffinClient</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>Tuomas Hietanen</Authors>
     <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
-    <Description>Griffin banking-as-a-service client: onboarding (legal persons, claims, verifications), bank accounts, payees, payments, transactions, events, verified webhooks and request signing.</Description>
-    <PackageTags>griffin;baas;banking;payments;fsharp</PackageTags>
+    <Description>For griffin.com. Unofficial .NET client for Griffin banking-as-a-service: onboarding (legal persons, claims, verifications), bank accounts, payees, payments, transactions, events, verified webhooks and request signing.</Description>
+    <PackageTags>griffin.com;griffin;baas;banking;payments;fsharp</PackageTags>
     <PackageProjectUrl>https://github.com/Thorium/GriffinClient</PackageProjectUrl>
     <RepositoryUrl>https://github.com/Thorium/GriffinClient.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>v1.1.0:
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReleaseNotes>v1.2.0:
+- ADDED: GriffinClient.createHttpClient: an HttpClient that doesn't follow redirects, which would send signatures and bodies to the redirect's host
+- ADDED: StandingOrder: schedules, due dates and paying an occurrence safely, for the caller's job to run (Griffin has no standing orders)
+- ADDED: PaymentRefusal.ofFailure reads why a payment was refused; BankProduct.Schemes; Api.attachCopToPayeeAsync
+- ADDED: users, roles, memberships, invitations and API keys, with a new key's secret hidden when printed
+- ADDED: reliance onboarding applications and their events
+- ADDED: legal person history, verification profiles, get workflow, get bank product
+- ADDED: Api.openAccountAsync opens an account by kind; Api.updateRestrictionAsync; Api.rejectPaymentAsync
+- ADDED: Api.getWebhookTestStatusAsync, Api.verifyRequestSignatureAsync, verification resource and test events
+- ADDED: Submission.ScheduledAt and UniqueSchemeIdentifier; Payment.PaymentType, MandateUrl, AdmissionsUrl, RejectionReason, RejectedAt; BankProduct.NoticePeriod
+- ADDED: BankAccount.SavingsType, ClientMoneyType, PrimaryAccount, AccruedInterest, ControllerUrl, OpenedAt, ClosedAt; Transaction.ProcessedAt; LegalPerson.LegalName, StatusChangedAt, HistoryUrl
+v1.1.0:
 - ADDED: Ed25519Key.signerOf: a request signer from a PKCS#8 private key, as PEM in any layout or bare base64
 - ADDED: dependency on BouncyCastle.Cryptography, for Ed25519 on every target
 v1.0.0:
@@ -37,6 +49,7 @@ v1.0.0:
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\icon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>
@@ -48,6 +61,7 @@ v1.0.0:
     <Compile Include="MessageSignature.fs" />
     <Compile Include="Ed25519Key.fs" />
     <Compile Include="Api.fs" />
+    <Compile Include="StandingOrder.fs" />
     <Compile Include="Webhook.fs" />
     <Compile Include="CSharp.fs" />
   </ItemGroup>

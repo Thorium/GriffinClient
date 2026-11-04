@@ -143,3 +143,26 @@ module Claims =
     /// ISO 3166-1 alpha-2 codes of the countries payments go to or come from; empty for none.
     let internationalPaymentsCountries (countryCodes: seq<string>) =
         claim "international-payments-countries" {| ``international-payments-countries`` = Array.ofSeq countryCodes |}
+
+/// A person's connection to the subject of a reliance onboarding application.
+[<RequireQualifiedAccess>]
+type SubjectRole =
+    | Director of companiesHouseUrl: string voption
+    /// A person with significant control.
+    | Psc of ownershipPercent: string voption * companiesHouseUrl: string voption
+    | SeniorManager
+    | GoverningBodyMember
+    | SeniorManagerFunctionHolder
+    /// Job titles, at most 50 characters each.
+    | RoleTitles of string list
+
+/// The subject of a reliance onboarding application (Api.createOnboardingApplicationAsync).
+type OnboardingProfile =
+    { DisplayName: string
+      Claims: Claim list }
+
+/// A person connected to the subject of a reliance onboarding application, such as a director.
+type RelatedProfile =
+    { DisplayName: string
+      Roles: SubjectRole list
+      Claims: Claim list }

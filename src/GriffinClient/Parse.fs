@@ -48,6 +48,9 @@ let page (itemsKey: string) (item: JsonElement -> 'T) (e: JsonElement) : Page<'T
 
 let index (e: JsonElement) : Index =
     { OrganizationUrl = required "organization-url" tryString e
+      UsersUrl = tryString "users-url" e
+      RolesUrl = tryString "roles-url" e
+      ApiKeyUrl = tryString "api-key-url" e
       Raw = e.GetRawText() }
 
 let organization (url: string) (e: JsonElement) : Organization =
@@ -62,7 +65,29 @@ let organization (url: string) (e: JsonElement) : Organization =
       PaymentsUrl = tryString "organization-payments-url" e
       EventsUrl = tryString "organization-events-url" e
       WebhooksUrl = tryString "organization-webhooks-url" e
+      MembershipsUrl = tryString "organization-memberships-url" e
+      InvitationsUrl = tryString "organization-invitations-url" e
+      ApiKeysUrl = tryString "organization-api-keys-url" e
+      OnboardingApplicationsUrl = tryString "organization-onboarding-applications-url" e
       Raw = e.GetRawText() }
+
+let private noticePeriod (e: JsonElement) =
+    match tryString "notice-period-type" e with
+    | ValueSome "instant-access" -> ValueSome NoticePeriod.InstantAccess
+    | ValueSome "same-or-next-day" -> ValueSome NoticePeriod.SameOrNextDay
+    | ValueSome "calendar-days" -> tryInt "days-of-notice" e |> ValueOption.map NoticePeriod.CalendarDays
+    | ValueSome other -> ValueSome(NoticePeriod.Other other)
+    | ValueNone -> ValueNone
+
+let private productSchemes (e: JsonElement) : ProductSchemes =
+    let can (scheme: string) (direction: string) =
+        tryObject scheme e |> ValueOption.exists (flag direction)
+
+    { FasterPaymentsInbound = can "faster-payments" "inbound"
+      FasterPaymentsOutbound = can "faster-payments" "outbound"
+      ChapsInbound = can "chaps" "inbound"
+      BacsDirectCreditsInbound = can "bacs-direct-credits" "inbound"
+      BacsDirectDebitsInbound = can "bacs-direct-debits" "inbound" }
 
 let bankProduct (e: JsonElement) : BankProduct =
     { Url = required "bank-account-product-url" tryString e
@@ -71,6 +96,8 @@ let bankProduct (e: JsonElement) : BankProduct =
       FundingType = tryParse FundingType.Parse "funding-type" e
       OwnerType = tryParse LegalPersonType.Parse "owner-type" e
       Status = tryString "bank-account-product-status" e
+      NoticePeriod = tryObject "notice-period" e |> ValueOption.bind noticePeriod
+      Schemes = tryObject "payment-schemes" e |> ValueOption.map productSchemes
       AccountsUrl = required "bank-account-product-accounts-url" tryString e
       Raw = e.GetRawText() }
 
@@ -79,13 +106,21 @@ let workflow (e: JsonElement) : Workflow =
 
     { Url = required "workflow-url" tryString e
       DisplayName = optionalString "display-name" e
+      Description = tryString "description" e
       LegalPersonType = LegalPersonType.Parse legalPersonType
       Disabled = flag "disabled?" e
       RequiredClaimTypes =
         tryObject "required-claim-types" e
         |> ValueOption.map (strings legalPersonType)
         |> ValueOption.defaultValue []
+      Rules = strings "workflow-rules" e
       Raw = e.GetRawText() }
+
+let private declineReason (r: JsonElement) : DeclineReason =
+    { Code = optionalString "decline-reason-code" r
+      Title = optionalString "decline-reason-title" r
+      Description = optionalString "decline-reason-description" r
+      ClaimTypes = strings "decline-reason-claim-types" r }
 
 let decision (e: JsonElement) : Decision =
     { Outcome = required "decision-outcome" (tryParse DecisionOutcome.Parse) e
@@ -93,20 +128,16 @@ let decision (e: JsonElement) : Decision =
       LegalPersonUrl = tryString "legal-person-url" e
       DecisionMaker = tryParse DecisionMaker.Parse "decision-maker" e
       Notes = optionalString "decision-notes" e
-      DeclineReasons =
-        array "decline-reasons" e
-        |> List.map (fun r ->
-            { Code = optionalString "decline-reason-code" r
-              Title = optionalString "decline-reason-title" r
-              Description = optionalString "decline-reason-description" r
-              ClaimTypes = strings "decline-reason-claim-types" r })
+      DeclineReasons = array "decline-reasons" e |> List.map declineReason
       CreatedAt = tryTimestamp "created-at" e }
 
 let legalPerson (e: JsonElement) : LegalPerson =
     { Url = required "legal-person-url" tryString e
       DisplayName = optionalString "display-name" e
       LegalPersonType = required "legal-person-type" (tryParse LegalPersonType.Parse) e
+      LegalName = tryString "legal-name" e
       Status = tryParse LegalPersonStatus.Parse "legal-person-status" e
+      StatusChangedAt = tryTimestamp "status-changed-at" e
       ApplicationStatus = tryParse ApplicationStatus.Parse "application-status" e
       LatestDecision = tryObject "latest-decision" e |> ValueOption.map decision
       ClaimsUrl = tryString "legal-person-claims-url" e
@@ -123,6 +154,7 @@ let verification (e: JsonElement) : Verification =
       Status = required "verification-status" (tryParse VerificationStatus.Parse) e
       RiskRating = tryParse RiskRating.Parse "risk-rating" e
       ResourcesUrl = tryString "verification-resources-url" e
+      ProfilesUrl = tryString "verification-profiles-url" e
       CreatedAt = tryTimestamp "created-at" e
       Raw = e.GetRawText() }
 
@@ -138,11 +170,16 @@ let bankAccount (e: JsonElement) : BankAccount =
       DisplayName = optionalString "display-name" e
       Status = required "account-status" (tryParse AccountStatus.Parse) e
       ProductType = tryParse BankProductType.Parse "bank-product-type" e
+      SavingsType = tryParse SavingsType.Parse "savings-type" e
+      ClientMoneyType = tryParse ClientMoneyType.Parse "client-money-type" e
+      PrimaryAccount = flag "primary-account" e
       Balance = tryMoney "account-balance" e
       AvailableBalance = tryMoney "available-balance" e
+      AccruedInterest = tryMoney "accrued-interest" e
       BankAddresses = array "bank-addresses" e |> List.map bankAddress
       OwnerUrl = tryString "owner-url" e
       BeneficiaryUrl = tryString "beneficiary-url" e
+      ControllerUrl = tryString "controller-url" e
       PaymentsUrl = tryString "account-payments-url" e
       TransactionsUrl = tryString "account-transactions-url" e
       CloseUrl = tryString "close-account-url" e
@@ -154,6 +191,8 @@ let bankAccount (e: JsonElement) : BankAccount =
       MandatesUrl = tryString "account-mandates-url" e
       PooledFunds = flag "pooled-funds" e
       Restricted = flag "account-restricted" e
+      OpenedAt = tryTimestamp "opened-at" e
+      ClosedAt = tryTimestamp "closed-at" e
       CreatedAt = tryTimestamp "created-at" e
       Raw = e.GetRawText() }
 
@@ -242,10 +281,15 @@ let mandate (e: JsonElement) : Mandate =
 let payment (e: JsonElement) : Payment =
     { Url = required "payment-url" tryString e
       Direction = tryParse PaymentDirection.Parse "payment-direction" e
+      PaymentType = tryParse PaymentType.Parse "payment-type" e
       Amount = required "payment-amount" tryMoney e
       Reference = tryString "payment-reference" e
+      MandateUrl = tryString "mandate-url" e
       SubmissionsUrl = tryString "payment-submissions-url" e
       LatestSubmissionUrl = tryString "latest-submission-url" e
+      AdmissionsUrl = tryString "payment-admissions-url" e
+      RejectionReason = tryString "rejection-reason" e
+      RejectedAt = tryTimestamp "rejected-at" e
       CreatedAt = tryTimestamp "created-at" e
       Raw = e.GetRawText() }
 
@@ -257,9 +301,11 @@ let submission (e: JsonElement) : Submission =
       AccountUrl = tryString "account-url" e
       Status = required "submission-status" (tryParse SubmissionStatus.Parse) e
       StatusReason = tryString "submission-status-reason" e
+      ScheduledAt = tryTimestamp "scheduled-at" e
       Scheme = scheme |> ValueOption.bind (tryParse PaymentScheme.Parse "payment-scheme")
       EndToEndId = scheme |> ValueOption.bind (tryString "end-to-end-identification")
       SchemeStatusCode = scheme |> ValueOption.bind (tryString "scheme-status-code")
+      UniqueSchemeIdentifier = tryString "unique-scheme-identifier" e
       CreatedAt = tryTimestamp "created-at" e
       Raw = e.GetRawText() }
 
@@ -286,6 +332,7 @@ let transaction (e: JsonElement) : Transaction =
       PaymentUrl = tryString "payment-url" e
       EffectiveAt = tryTimestamp "effective-at" e
       PostedAt = tryTimestamp "post-datetime" e
+      ProcessedAt = tryTimestamp "processed-at" e
       Raw = e.GetRawText() }
 
 let webhook (e: JsonElement) : WebhookEndpoint =
@@ -373,6 +420,118 @@ let tellConsent (e: JsonElement) : TellConsent =
       ConsumedAt = tryTimestamp "tell-consent-consumed-at" e
       RevokedAt = tryTimestamp "tell-consent-revoked-at" e
       CreatedAt = tryTimestamp "created-at" e
+      Raw = e.GetRawText() }
+
+let signatureCheck (e: JsonElement) : SignatureCheck =
+    { Message = optionalString "message" e
+      Busy = flag "busy" e }
+
+let webhookTestStatus (e: JsonElement) : WebhookTestStatus =
+    { Status = required "webhook-request-status" tryString e
+      HttpStatus = tryInt "webhook-http-status" e
+      ErrorCode = tryString "webhook-error-code" e
+      UpdatedAt = tryTimestamp "updated-at" e }
+
+let apiKey (e: JsonElement) : ApiKey =
+    { Url = required "api-key-url" tryString e
+      Name = optionalString "api-key-name" e
+      Live = flag "api-key-live?" e
+      OrganizationUrl = optionalString "organization-url" e
+      UserUrl = optionalString "user-url" e
+      CreatedAt = tryTimestamp "created-at" e
+      Raw = e.GetRawText() }
+
+let createdApiKey (e: JsonElement) : CreatedApiKey =
+    { Key = { apiKey e with Raw = "" }
+      Secret = required "api-key-secret" tryString e }
+
+let role (e: JsonElement) : Role =
+    { Url = required "role-url" tryString e
+      DisplayName = optionalString "display-name" e
+      Description = optionalString "description" e
+      Category = tryString "role-category" e }
+
+let roles (e: JsonElement) : Role list = array "roles" e |> List.map role
+
+let user (e: JsonElement) : User =
+    { Url = required "user-url" tryString e
+      Email = optionalString "user-email" e
+      Username = optionalString "user-username" e
+      GivenName = tryString "given-name" e
+      Surname = tryString "surname" e
+      ApiKeysUrl = tryString "api-keys-url" e
+      MembershipsUrl = tryString "user-memberships-url" e
+      Raw = e.GetRawText() }
+
+let membership (e: JsonElement) : Membership =
+    { Url = required "membership-url" tryString e
+      RolesUrl = required "membership-roles-url" tryString e
+      OrganizationUrl = tryObject "organization" e |> ValueOption.bind (tryString "organization-url")
+      User = tryObject "user" e |> ValueOption.map user
+      Roles = roles e
+      CreatedAt = tryTimestamp "created-at" e
+      Raw = e.GetRawText() }
+
+let legalPersonHistoryEvent (e: JsonElement) : LegalPersonHistoryEvent =
+    let eventType = required "legal-person-history-event-type" tryString e
+
+    { Kind =
+        match eventType with
+        | "risk-rating-registered" ->
+            LegalPersonHistoryKind.RiskRatingRegistered(
+                required "risk-rating" (tryParse RiskRating.Parse) e,
+                tryParse RiskRating.Parse "previous-risk-rating" e,
+                tryString "notes" e
+            )
+        | "decision-created" -> LegalPersonHistoryKind.DecisionCreated(decision e)
+        | "verification-created" ->
+            LegalPersonHistoryKind.VerificationCreated(required "verification-url" tryString e, tryString "workflow-url" e)
+        | other -> LegalPersonHistoryKind.Other other
+      Timestamp = tryTimestamp "timestamp" e
+      Raw = e.GetRawText() }
+
+let private verificationProfile (e: JsonElement) : VerificationProfile =
+    { DisplayName = optionalString "display-name" e
+      LegalPersonUrl = required "legal-person-url" tryString e
+      LegalPersonType = required "legal-person-type" (tryParse LegalPersonType.Parse) e
+      LegalName = tryString "legal-name" e
+      CurrentClaims =
+        array "current-claims" e
+        |> List.map (fun c ->
+            { ClaimType = optionalString "claim-type" c
+              Raw = c.GetRawText() }) }
+
+let verificationProfiles (e: JsonElement) : VerificationProfiles =
+    { Subject = verificationProfile (required "verification-subject-profile" tryObject e)
+      RelatedParties = array "verification-related-party-profiles" e |> List.map verificationProfile
+      Raw = e.GetRawText() }
+
+let onboardingApplication (e: JsonElement) : OnboardingApplication =
+    { Url = required "onboarding-application-url" tryString e
+      Status =
+        match required "onboarding-application-status" tryString e with
+        | "submitted" -> OnboardingStatus.Submitted
+        | "processing" -> OnboardingStatus.Processing
+        | "errored" -> OnboardingStatus.Errored(strings "error-reasons" e)
+        | "complete" ->
+            OnboardingStatus.Complete(
+                required "decision-outcome" (tryParse DecisionOutcome.Parse) e,
+                array "decline-reasons" e |> List.map declineReason
+            )
+        | other -> OnboardingStatus.Other other
+      WorkflowUrl = tryString "workflow-url" e
+      LegalPersonUrl = tryString "legal-person-url" e
+      VerificationUrl = tryString "verification-url" e
+      CreatedAt = tryTimestamp "created-at" e
+      Raw = e.GetRawText() }
+
+let verificationResource (e: JsonElement) : VerificationResource =
+    { ResourceId = tryString "verification-resource-id" e
+      VerificationUrl = required "verification-url" tryString e
+      LegalPersonUrl = tryString "legal-person-url" e
+      Status = tryParse IdvCheckStatus.Parse "idv-check-status" e
+      IdvCheckUrl = tryString "idv-check-url" e
+      ExpiresAt = tryTimestamp "idv-check-expires-at" e
       Raw = e.GetRawText() }
 
 let webhookKeys (e: JsonElement) : WebhookKey list =

@@ -1,21 +1,32 @@
 # GriffinClient
 
+For [griffin.com](https://griffin.com). An unofficial client, not affiliated with or endorsed by Griffin, a trademark of its owner.
+
 A standalone F# client for [Griffin](https://griffin.com), the UK banking-as-a-service platform. It has no
-dependencies beyond FSharp.Core and System.Text.Json, and targets `netstandard2.0`, `net8.0` and `net10.0`.
+dependencies beyond FSharp.Core, System.Text.Json and BouncyCastle.Cryptography, and targets `netstandard2.0`,
+`net8.0` and `net10.0`.
 It speaks Griffin API version `2026-07-09` (sent as `Griffin-Version`).
 
 What it covers:
 
 - Navigation: index, organization, bank products, onboarding workflows
-- Onboarding: legal persons (create, read, list, rename) with claims (`Claims` module; list, add, delete),
-  verifications, the ID document and selfie check link (`IdvCheck`), decisions with decline reasons, and manual
-  decisions on referred verifications
-- Banking: open, read, list and close bank accounts; freezes and blocks (restrictions); statements (request,
-  read, download); Direct Debit mandates (list, read, cancel)
-- Payments: Confirmation of Payee (plus its sandbox simulation), payees (create, read, list, deactivate), payments
-  (create, submit, submissions), inbound payments (admissions), transactions
-- Events with typed payloads, webhook management, and webhook verification (ES512 message signatures) with a key cache
-- Request signing (RFC 9421, Ed25519) through a pluggable signer, which live mode requires
+- Onboarding: legal persons (create, read, list, rename, history) with claims (`Claims` module; list, add, delete),
+  verifications and the claims they used (`getVerificationProfilesAsync`), the ID document and selfie check link
+  (`IdvCheck`), decisions with decline reasons, manual decisions on referred verifications, and reliance onboarding
+  applications
+- Banking: open (by product or by kind), read, list and close bank accounts; freezes and blocks (restrictions:
+  apply, read, update, lift); statements (request, read, download); Direct Debit mandates (list, read, cancel) and
+  their collections
+- Payments: Confirmation of Payee (plus its sandbox simulation), payees (create, read, list, attach a check,
+  deactivate), payments (create, submit, reject, submissions), typed refusal reasons, inbound payments (admissions),
+  transactions
+- Standing orders and future-dated payments, built on top of those for your own job to run (`StandingOrder`)
+- Events with typed payloads, webhook management including test delivery status, and webhook verification (ES512
+  message signatures) with a key cache
+- Request signing (RFC 9421, Ed25519) through a pluggable signer, which live mode requires, and Griffin's debug
+  endpoint for checking it (`verifyRequestSignatureAsync`)
+- Team administration: users, roles, memberships (list, read, set roles, remove), invitations, API keys (create,
+  read, list, delete; printing a new key hides its secret)
 - Search for legal persons (by name), bank accounts (by account number) and payments (by reference); rename
   accounts and webhooks
 - Companies House company lookup (directors, persons with significant control, address, SIC codes), card holds,
@@ -23,7 +34,19 @@ What it covers:
 - Pagination (`Api.allPagesAsync`) and `Api.sendAsync` / `sendRawAsync` for any other endpoint
 
 Not typed (reach them through `Api.sendAsync`): corporate onboarding claims (directors, persons with significant
-control, business details), Reliance onboarding, payment updates, team and API key administration.
+control, business details).
+
+Griffin's API has no standing orders, recurring payments or caller-chosen payment dates: `StandingOrder` builds those
+on top, and your job has to run them (see [Standing orders](#standing-orders)). These have no API and cannot be built
+on top:
+
+- Current Account Switch Service, outbound CHAPS and outbound Bacs Direct Credits. Payments are sent by Faster
+  Payments or book transfer only.
+- Direct Debit collection from other banks' accounts. Direct Debits run one way: organizations collect from Griffin
+  accounts, against mandates they lodge. `BankProduct.Schemes` says whether a product takes them.
+- Debit cards, overdrafts and cheques. Card holds can be read, but no endpoint issues a card.
+- Reactivating a deactivated payee: create a new one.
+- Direct Debit indemnity claims and credit payment recovery, which go through Griffin's support.
 
 Griffin offers no credit checks or credit files: those come from a credit reference agency (Experian, Equifax,
 TransUnion). For a customer's account data (balances, transactions) use open banking, e.g. PlaidClient.
@@ -48,10 +71,14 @@ fields such as industries) stay strings.
 Griffin is navigated by links: every resource carries the URLs of related resources, so functions take those
 URLs rather than ids.
 
+**Use an `HttpClient` that doesn't follow redirects.** On a redirect to another host, .NET drops the API key but sends
+the request signature and, on a 307, the body. `GriffinClient.createHttpClient ()` makes one, and a redirect then comes back
+as an error. With your own, set `AllowAutoRedirect = false` on its handler.
+
 ```fsharp
 open Griffin
 
-let client = { Config = GriffinConfig.create apiKey; Http = httpClient }   // you own the HttpClient
+let client = { Config = GriffinConfig.create apiKey; Http = GriffinClient.createHttpClient () }   // you own the HttpClient
 
 // 1. Your organization, its products and workflows.
 let! org = Api.getOwnOrganizationAsync client ct
@@ -123,6 +150,75 @@ host is `ForeignLink`, for you to fetch with an `HttpClient` that carries no cre
 `Api.resolveUrl` only follows relative links and links on `GriffinConfig.BaseUrl`'s host; anything else is
 `ForeignLink`, so the API key is never sent elsewhere. Griffin returns some links with the legacy `/v0` prefix
 (event payloads do); both forms work, and `Api.canonicalLink` drops the prefix for comparing and storing links.
+
+## Scheduled submissions
+
+A request cannot choose when a payment goes: `Api.submitPaymentAsync` takes only the scheme. Griffin delays payments
+from bare trust and easy access savings accounts under its withdrawal schedule, and then answers with
+`SubmissionStatus.Scheduled` and `Submission.ScheduledAt`, the earliest time processing can start. The money stays in
+the account, earning interest, until then. `BankProduct.NoticePeriod` says what a product's withdrawals wait for.
+
+## Refused payments
+
+Griffin answers 422 when it refuses to create or submit a payment. `PaymentRefusal.ofFailure` reads the reason, such
+as `InsufficientFunds`, `AccountRestricted` or `CopRequired`:
+
+```fsharp
+match result with
+| Error failure when PaymentRefusal.ofFailure failure = ValueSome PaymentRefusal.InsufficientFunds -> // submit again once funded
+| Error failure -> failwith (GriffinFailure.describe failure)
+| Ok submission -> // follow it to delivery
+```
+
+## Standing orders
+
+**Griffin does not run these. Nothing pays unless your job runs.** `StandingOrder` works out when an order pays and pays
+one occurrence safely. It holds no state: you store each order and its last completed date, and something of yours has
+to call it every day.
+
+```fsharp
+let rent =
+    { Reference = "Rent"                                   // at most 26 characters, unique on the account
+      Amount = Money.gbp 500m
+      Creditor = ToPayee payee.Url
+      Scheme = PaymentScheme.Fps
+      FirstDate = DateTime(2026, 1, 31)
+      Frequency = OrderFrequency.EveryMonths(1, MonthDay.Last)
+      End = OrderEnd.NoEnd
+      NonWorkingDays = NonWorkingDayRule.NextWorkingDay }
+
+let calendar = WorkingCalendar.withHolidays bankHolidays   // yours, e.g. from https://www.gov.uk/bank-holidays.json
+
+for occurrence in StandingOrder.dueOccurrences calendar lastCompleted today rent do
+    match! StandingOrder.payAsync client account.PaymentsUrl.Value rent occurrence ct with
+    | Ok(Submitted _ | AlreadySubmitted _ | Rejected _) -> // store occurrence.ScheduledDate as lastCompleted
+    | Ok(CreationUnknown _) -> // leave it for a later run
+    | Error failure -> // leave it for a later run, PaymentRefusal.ofFailure says if it was refused
+```
+
+The rules:
+
+- **Dates.** `today` and all dates are UK calendar dates, which you work out. `OrderFrequency` is `Once` (a
+  future-dated payment), `EveryWeeks` or `EveryMonths`. Dates are worked out from the first date, so a short month
+  does not move later ones: `MonthDay.Day 31` pays on 28 February and then on 31 March.
+- **Weekends and bank holidays.** Faster Payments and book transfers run every day, so `NonWorkingDays` is your choice:
+  `PayOnTheDay`, `NextWorkingDay` or `PreviousWorkingDay`. `WorkingCalendar.weekdays` knows no bank holidays, and the
+  library has no list of them.
+- **Missed runs.** `dueOccurrences` returns every occurrence due since `lastCompleted`, so a job that was down pays
+  them all late when it comes back. Check their `Due` dates if that would be wrong.
+- **Paying twice.** Griffin takes no idempotency key when creating a payment. `payAsync` uses the occurrence's
+  `Reference` (the order's reference and its date) instead: it looks for that payment on the account first, creates it
+  only if it finds none, then submits, which Griffin makes idempotent. Running an occurrence again after a failed
+  submit pays once.
+- **What that does not cover.** Run one order at a time: two runs together can each find no payment and create one.
+  After `CreationUnknown`, wait before running that occurrence again: Griffin may still be creating the payment, and
+  states no time for it to appear in a list. If it then appears after the next run looked, it would be paid twice.
+- **Payments that fail.** A submission that ends `Failed` or `Returned` is not paid again, because its reference now
+  names that payment. Pay it by hand. Payees see the date in the reference, as `Rent 20260131`.
+- **Funds.** `payAsync` does not check the balance first; the payment is refused with `InsufficientFunds` and goes on a
+  later run once funded.
+- **Savings accounts.** A payment from one comes back `Submitted` with `SubmissionStatus.Scheduled`, and goes at
+  `ScheduledAt`.
 
 ## Claims
 

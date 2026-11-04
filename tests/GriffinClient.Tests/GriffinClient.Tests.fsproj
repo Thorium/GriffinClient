@@ -9,11 +9,14 @@
   <ItemGroup>
     <Compile Include="FakeGriffin.fs" />
     <Compile Include="ApiTests.fs" />
+    <Compile Include="RedirectTests.fs" />
     <Compile Include="EventTests.fs" />
     <Compile Include="BankingTests.fs" />
     <Compile Include="MoreTests.fs" />
     <Compile Include="SigningTests.fs" />
     <Compile Include="WebhookTests.fs" />
+    <Compile Include="ReferenceCoverageTests.fs" />
+    <Compile Include="StandingOrderTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

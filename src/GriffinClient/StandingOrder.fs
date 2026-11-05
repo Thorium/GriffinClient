@@ -130,6 +130,8 @@ module StandingOrder =
 
         if String.IsNullOrWhiteSpace order.Reference then
             Error "The reference is empty"
+        elif order.Reference <> order.Reference.Trim() then
+            Error "The reference starts or ends with a space"
         elif order.Reference.Length > ReferenceLimit then
             Error $"The reference is over {ReferenceLimit} characters"
         elif order.Amount.Currency <> "GBP" then
@@ -185,8 +187,13 @@ module StandingOrder =
         | NonWorkingDayRule.NextWorkingDay -> moved 1.0
         | NonWorkingDayRule.PreviousWorkingDay -> moved -1.0
 
-    /// Every occurrence of the order in date order. Endless for OrderEnd.NoEnd, so take from it as needed.
+    /// Every occurrence of the order in date order. Endless for OrderEnd.NoEnd, so take from it as needed. A frequency
+    /// that never moves on (validate says which) is an ArgumentException here, not a loop that doesn't end.
     let occurrences (calendar: WorkingCalendar) (order: StandingOrder) : seq<OrderOccurrence> =
+        match validateFrequency order.Frequency with
+        | Error reason -> invalidArg (nameof order) reason
+        | Ok() -> ()
+
         let dates =
             match order.End with
             | OrderEnd.NoEnd -> scheduledDates order
@@ -221,21 +228,46 @@ module StandingOrder =
             lastCompleted |> ValueOption.forall (fun completed -> occurrence.ScheduledDate > completed.Date))
         |> List.ofSeq
 
-    /// A day before the occurrence could first have been paid, which also covers the difference between UK dates and UTC.
+    /// Before the occurrence could first have been paid: its due date can move by up to 32 days if the rule or calendar has
+    /// changed since, and a day covers the difference between UK dates and UTC. The reference holds the date, so looking
+    /// further back can't find another occurrence.
     let private createdSince (occurrence: OrderOccurrence) =
-        let earliest = (min occurrence.Due occurrence.ScheduledDate).AddDays -1.0
+        let earliest = (min occurrence.Due occurrence.ScheduledDate).AddDays -33.0
         earliest.ToString("yyyy-MM-dd'T'00:00:00'Z'", CultureInfo.InvariantCulture)
 
-    /// The account's payment for this occurrence. A page item that cannot be read could be that payment, so it fails the
-    /// lookup rather than risk creating a second one.
-    let private findPaymentAsync (client: GriffinClient) (paymentsUrl: string) (occurrence: OrderOccurrence) (ct: CancellationToken) =
+    /// Which payment with the occurrence's reference is the occurrence's. A submitted one wins, so a second copy is never
+    /// sent. It fails rather than guess: another amount means the reference is another payment's, and two unsent copies could
+    /// each be the one sent next.
+    let private occurrencePayment (order: StandingOrder) (occurrence: OrderOccurrence) (matching: Payment list) =
+        let sendable = matching |> List.filter (fun payment -> payment.RejectedAt.IsNone)
+        let submitted = sendable |> List.filter (fun payment -> payment.LatestSubmissionUrl.IsSome)
+
+        match matching |> List.tryFind (fun payment -> payment.Amount <> order.Amount), submitted, sendable, matching with
+        | Some other, _, _, _ ->
+            Error(InvalidResponse $"Payment {other.Url} has the reference {occurrence.Reference} and another amount")
+        | None, first :: _, _, _ -> Ok(ValueSome first)
+        | None, [], [ only ], _ -> Ok(ValueSome only)
+        | None, [], [], rejected :: _ -> Ok(ValueSome rejected)
+        | None, [], [], [] -> Ok ValueNone
+        | None, [], several, _ ->
+            Error(InvalidResponse $"{several.Length} unsent payments have the reference {occurrence.Reference}")
+
+    /// The account's payment for this occurrence. A page that cannot be read, in whole or in part, could hold that payment,
+    /// so it fails the lookup rather than risk creating a second one.
+    let private findPaymentAsync
+        (client: GriffinClient)
+        (paymentsUrl: string)
+        (order: StandingOrder)
+        (occurrence: OrderOccurrence)
+        (ct: CancellationToken)
+        =
         task {
             let link =
                 Api.withQuery
                     paymentsUrl
-                    [ "filter[created-at][gte]", createdSince occurrence
-                      "filter[payment-direction][eq]", PaymentDirection.Outbound.Value
-                      "page[size]", "200" ]
+                    (Api.Query.atLeast "created-at" (createdSince occurrence)
+                     @ Api.Query.paymentDirection PaymentDirection.Outbound
+                     @ Api.Query.pageSize 200)
 
             match! Api.allPagesAsync (Api.listPaymentsAsync client) link ct with
             | Error failure -> return Error failure
@@ -244,12 +276,11 @@ module StandingOrder =
             | Ok page ->
                 return
                     page.Items
-                    |> List.tryFind (fun payment ->
+                    |> List.filter (fun payment ->
                         payment.Reference
                         |> ValueOption.exists (fun reference ->
-                            String.Equals(reference.Trim(), occurrence.Reference, StringComparison.OrdinalIgnoreCase)))
-                    |> ofOption
-                    |> Ok
+                            String.Equals(reference.Trim(), occurrence.Reference.Trim(), StringComparison.OrdinalIgnoreCase)))
+                    |> occurrencePayment order occurrence
         }
 
     let private submissionOfAsync client (payment: Payment) ct =
@@ -317,7 +348,7 @@ module StandingOrder =
             match validate order with
             | Error reason -> return Error(InvalidRequest reason)
             | Ok order ->
-                match! findPaymentAsync client paymentsUrl occurrence ct with
+                match! findPaymentAsync client paymentsUrl order occurrence ct with
                 | Error failure -> return Error failure
                 | Ok(ValueSome existing) when existing.RejectedAt.IsSome -> return Ok(Rejected existing)
                 | Ok(ValueSome existing) when existing.LatestSubmissionUrl.IsSome -> return! submissionOfAsync client existing ct

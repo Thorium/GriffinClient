@@ -46,3 +46,17 @@ type GriffinApi =
     /// Api.withQuery with name/value pairs.
     static member WithQuery(link: string, parameters: IEnumerable<KeyValuePair<string, string>>) =
         Api.withQuery link (parameters |> Seq.map (fun p -> p.Key, p.Value))
+
+/// Api.Query as name/value pairs, for GriffinApi.WithQuery.
+[<AbstractClass; Sealed>]
+type GriffinQuery =
+
+    static member private Pairs(parameters: (string * string) list) : IEnumerable<KeyValuePair<string, string>> =
+        parameters |> Seq.map (fun (name, value) -> KeyValuePair<string, string>(name, value))
+
+    static member PageSize(size: int) = GriffinQuery.Pairs(Api.Query.pageSize size)
+    static member NewestFirst() = GriffinQuery.Pairs Api.Query.newestFirst
+    static member OldestFirst() = GriffinQuery.Pairs Api.Query.oldestFirst
+    static member Equal(field: string, value: string) = GriffinQuery.Pairs(Api.Query.equals field value)
+    static member AnyOf(field: string, values: IEnumerable<string>) = GriffinQuery.Pairs(Api.Query.anyOf field values)
+    static member AtLeast(field: string, value: string) = GriffinQuery.Pairs(Api.Query.atLeast field value)

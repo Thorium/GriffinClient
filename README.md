@@ -178,7 +178,7 @@ to call it every day.
 
 ```fsharp
 let rent =
-    { Reference = "Rent"                                   // at most 26 characters, unique on the account
+    { Reference = "Rent"                                   // at most 26 characters, unique on the account ignoring case
       Amount = Money.gbp 500m
       Creditor = ToPayee payee.Url
       Scheme = PaymentScheme.Fps
@@ -189,11 +189,21 @@ let rent =
 
 let calendar = WorkingCalendar.withHolidays bankHolidays   // yours, e.g. from https://www.gov.uk/bank-holidays.json
 
-for occurrence in StandingOrder.dueOccurrences calendar lastCompleted today rent do
-    match! StandingOrder.payAsync client account.PaymentsUrl.Value rent occurrence ct with
-    | Ok(Submitted _ | AlreadySubmitted _ | Rejected _) -> // store occurrence.ScheduledDate as lastCompleted
-    | Ok(CreationUnknown _) -> // leave it for a later run
-    | Error failure -> // leave it for a later run, PaymentRefusal.ofFailure says if it was refused
+// Oldest first, stopping at the first that isn't finished: storing a later date as lastCompleted would lose this one
+let rec payDue occurrences =
+    task {
+        match occurrences with
+        | [] -> ()
+        | occurrence :: rest ->
+            match! StandingOrder.payAsync client account.PaymentsUrl.Value rent occurrence ct with
+            | Ok(Submitted _ | AlreadySubmitted _ | Rejected _) ->
+                // store occurrence.ScheduledDate as lastCompleted
+                return! payDue rest
+            | Ok(CreationUnknown _) -> () // a later run takes it up
+            | Error failure -> () // a later run takes it up, PaymentRefusal.ofFailure says if it was refused
+    }
+
+let! () = payDue (StandingOrder.dueOccurrences calendar lastCompleted today rent)
 ```
 
 The rules:
@@ -250,13 +260,20 @@ names the field, e.g. `claims/7/occupation`. `Claims.custom` covers every other 
 
 ## Pagination
 
-List functions take the first page's URL or a page's `Next`. `Api.withQuery` adds page size, sort and filters,
-and `Api.allPagesAsync` reads every page into one `Page` (all `Items`, no `Next`):
+List functions take the first page's URL or a page's `Next`. Griffin lists newest first, 25 to a page. `Api.withQuery`
+adds what `Api.Query` spells (page size up to 200, sort and filters), and `Api.allPagesAsync` reads every page into one
+`Page` (all `Items`, no `Next`):
 
 ```fsharp
-let first = Api.withQuery account.TransactionsUrl.Value [ "page[size]", "200" ]
+let first = Api.withQuery account.TransactionsUrl.Value (Api.Query.pageSize 200 @ Api.Query.oldestFirst)
 let! transactions = Api.allPagesAsync (Api.listTransactionsAsync client) first ct
+
+let opening = Api.withQuery org.BankAccountsUrl (Api.Query.accountStatus [ AccountStatus.Opening; AccountStatus.Open ])
+let! accounts = Api.listBankAccountsAsync client opening ct
 ```
+
+Only some lists take a given filter, and Griffin's reference says which. `Api.Query.equals`, `anyOf` and `atLeast` spell
+any others.
 
 An item Griffin returns that this client cannot read lands in `Page.Unparsed` (with the reason and its JSON) instead
 of failing the whole list.
@@ -374,7 +391,7 @@ var person = await Api.createLegalPersonAsync(client, org.LegalPersonsUrl, "Ada 
     .GetValueOrThrowAsync();
 
 // Pagination and query strings with delegates and pairs.
-var first = GriffinApi.WithQuery(account.TransactionsUrl.Value, [KeyValuePair.Create("page[size]", "200")]);
+var first = GriffinApi.WithQuery(account.TransactionsUrl.Value, GriffinQuery.PageSize(200));
 var all = await GriffinApi.AllPagesAsync<Transaction>((link, token) => Api.listTransactionsAsync(client, link, token), first, ct)
     .GetValueOrThrowAsync();
 

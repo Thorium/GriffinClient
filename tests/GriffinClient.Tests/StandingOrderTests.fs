@@ -251,7 +251,7 @@ let ``an occurrence is created with its reference and submitted`` () : Task =
 
         let lookup = handler.Calls.Head
         Assert.Equal("GET", lookup.Method)
-        Assert.Contains("filter%5Bcreated-at%5D%5Bgte%5D=2026-01-30T00%3A00%3A00Z", lookup.Target)
+        Assert.Contains("filter%5Bcreated-at%5D%5Bgte%5D=2025-12-29T00%3A00%3A00Z", lookup.Target)
         Assert.Contains("filter%5Bpayment-direction%5D%5Beq%5D=outbound-payment", lookup.Target)
         Assert.Contains("page%5Bsize%5D=200", lookup.Target)
         Assert.Equal("fps", (List.last handler.Calls).Body.Value.GetProperty("payment-scheme").GetString())
@@ -524,3 +524,95 @@ let ``a check is attached to an existing payee`` () : Task =
         Assert.Equal("PATCH", call.Method)
         Assert.Equal("/cop-request/cp.1", call.Body.Value.GetProperty("cop-request-url").GetString())
     }
+
+let private paymentOf (url: string) (value: string) (submitted: bool) =
+    let latest = if submitted then $""","latest-submission-url":"{url}/submission" """ else ""
+    $"""{{"payment-url":"{url}","payment-direction":"outbound-payment","payment-amount":{{"currency":"GBP","value":"{value}"}},"payment-reference":"{occurrence.Reference}","payment-submissions-url":"{url}/submissions"{latest},"created-at":"2026-01-31T09:00:00Z"}}"""
+
+/// A list of these payments, and a delivered submission for any of them. Nothing else should be asked for.
+let private listing (payments: string list) =
+    new FakeGriffinHandler(fun _ target _ ->
+        if target.EndsWith "/submission" then
+            ok """{"submission-url":"/payments/pm.2/submission","payment-url":"/payments/pm.2","submission-status":"delivered"}"""
+        else
+            ok (pageJson "payments" payments ValueNone))
+
+[<Theory>]
+[<InlineData("{}")>]
+[<InlineData("""{"payments":null}""")>]
+[<InlineData("""{"errors":[]}""")>]
+[<InlineData("null")>]
+let ``a lookup that answers without its list creates nothing`` (body: string) : Task =
+    task {
+        use handler = new FakeGriffinHandler(fun _ _ _ -> ok body)
+        let! outcome = StandingOrder.payAsync (clientWith handler) "/bank/accounts/ba.1/payments" order occurrence ct
+
+        match outcome with
+        | Error(InvalidResponse _) -> ()
+        | other -> failwith $"%A{other}"
+
+        Assert.Single handler.Calls |> ignore
+    }
+
+[<Fact>]
+let ``a submitted copy of a reference wins over an unsent one`` () : Task =
+    task {
+        use handler = listing [ paymentOf "/payments/pm.1" "500.00" false; paymentOf "/payments/pm.2" "500.00" true ]
+        let! outcome = StandingOrder.payAsync (clientWith handler) "/bank/accounts/ba.1/payments" order occurrence ct
+
+        match outcome with
+        | Ok(AlreadySubmitted(payment, _)) -> Assert.Equal("/payments/pm.2", payment.Url)
+        | other -> failwith $"%A{other}"
+    }
+
+[<Fact>]
+let ``two unsent copies of a reference send nothing`` () : Task =
+    task {
+        use handler = listing [ paymentOf "/payments/pm.1" "500.00" false; paymentOf "/payments/pm.2" "500.00" false ]
+        let! outcome = StandingOrder.payAsync (clientWith handler) "/bank/accounts/ba.1/payments" order occurrence ct
+
+        match outcome with
+        | Error(InvalidResponse reason) -> Assert.Contains("2 unsent", reason)
+        | other -> failwith $"%A{other}"
+
+        Assert.Single handler.Calls |> ignore
+    }
+
+[<Fact>]
+let ``a reference on a payment of another amount is left alone, and nothing is recorded as paid`` () : Task =
+    task {
+        use handler = listing [ paymentOf "/payments/pm.1" "20.00" true ]
+        let! outcome = StandingOrder.payAsync (clientWith handler) "/bank/accounts/ba.1/payments" order occurrence ct
+
+        match outcome with
+        | Error(InvalidResponse reason) -> Assert.Contains("another amount", reason)
+        | other -> failwith $"%A{other}"
+    }
+
+[<Theory>]
+[<InlineData(" Rent")>]
+[<InlineData("Rent ")>]
+let ``a reference with a space at either end is refused`` (reference: string) =
+    match StandingOrder.validate { order with Reference = reference } with
+    | Error reason -> Assert.Contains("space", reason)
+    | Ok _ -> failwith "accepted"
+
+[<Fact>]
+let ``a frequency that never moves on is refused rather than hanging`` () =
+    let refused (frequency: OrderFrequency) =
+        let never = { order with Frequency = frequency; End = OrderEnd.Count 1 }
+        let today = DateTime(2026, 6, 1)
+
+        Assert.Throws<ArgumentException>(fun () -> StandingOrder.occurrences WorkingCalendar.weekdays never |> ignore)
+        |> ignore
+
+        Assert.Throws<ArgumentException>(fun () -> StandingOrder.nextDue WorkingCalendar.weekdays today never |> ignore)
+        |> ignore
+
+        Assert.Throws<ArgumentException>(fun () ->
+            StandingOrder.dueOccurrences WorkingCalendar.weekdays ValueNone today never |> ignore)
+        |> ignore
+
+    refused (OrderFrequency.EveryWeeks 0)
+    refused (OrderFrequency.EveryMonths(0, MonthDay.Day 1))
+    refused (OrderFrequency.EveryMonths(1, MonthDay.Day 0))

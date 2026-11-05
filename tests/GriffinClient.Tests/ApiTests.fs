@@ -438,3 +438,23 @@ let ``legal person parses the latest decision with decline reasons`` () : Task =
         Assert.Equal("applicant-under-16", reason.Code)
         Assert.Equal<string list>([ "individual-identity" ], reason.ClaimTypes)
     }
+
+[<Fact>]
+let ``Query spells page size, sort and filters as Griffin documents them`` () =
+    Assert.Equal<(string * string) list>([ "page[size]", "200" ], Api.Query.pageSize 500)
+    Assert.Equal<(string * string) list>([ "page[size]", "1" ], Api.Query.pageSize 0)
+    Assert.Equal<(string * string) list>([ "sort", "created-at" ], Api.Query.oldestFirst)
+    Assert.Equal<(string * string) list>([ "sort", "-created-at" ], Api.Query.newestFirst)
+
+    Assert.Equal<(string * string) list>(
+        [ "filter[account-status][in][]", "opening"; "filter[account-status][in][]", "open" ],
+        Api.Query.accountStatus [ AccountStatus.Opening; AccountStatus.Open ]
+    )
+
+    Assert.Equal<(string * string) list>(
+        [ "filter[application-status][eq]", "accepted" ],
+        Api.Query.equals "application-status" "accepted"
+    )
+
+    let link = Api.withQuery "/bank/accounts" (Api.Query.pageSize 2 @ Api.Query.oldestFirst)
+    Assert.Equal("/bank/accounts?page%5Bsize%5D=2&sort=created-at", link)

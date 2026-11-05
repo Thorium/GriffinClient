@@ -43,6 +43,30 @@ let withQuery (link: string) (parameters: seq<string * string>) =
 
         link + (if link.Contains "?" then "&" else "?") + query
 
+/// Query parameters for withQuery, joined with @: Query.pageSize 200 @ Query.oldestFirst. Griffin lists newest first, 25 to a
+/// page. Only some lists take a given filter, and Griffin's reference says which.
+module Query =
+
+    /// Griffin takes 1 to 200, so a size outside that is brought inside it.
+    let pageSize (size: int) = [ "page[size]", string (size |> max 1 |> min 200) ]
+
+    let newestFirst = [ "sort", "-created-at" ]
+    let oldestFirst = [ "sort", "created-at" ]
+
+    let equals (field: string) (value: string) = [ $"filter[{field}][eq]", value ]
+
+    let anyOf (field: string) (values: string seq) =
+        [ for value in values -> $"filter[{field}][in][]", value ]
+
+    let atLeast (field: string) (value: string) = [ $"filter[{field}][gte]", value ]
+
+    let accountStatus (statuses: AccountStatus seq) =
+        anyOf "account-status" (statuses |> Seq.map _.Value)
+
+    let applicationStatus (status: ApplicationStatus) = equals "application-status" status.Value
+
+    let paymentDirection (direction: PaymentDirection) = equals "payment-direction" direction.Value
+
 /// Griffin's errors array as ApiError; an empty body is ApiError with no errors, so callers still match on status.
 let private failureOf status (text: string) =
     let parsed =

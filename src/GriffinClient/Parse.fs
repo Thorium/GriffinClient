@@ -29,7 +29,7 @@ let errors (e: JsonElement) : GriffinError list =
           About = tryObject "links" err |> ValueOption.bind (tryString "about") })
 
 /// A list response: items under itemsKey, links.prev / links.next. An item that does not parse goes to
-/// Unparsed instead of failing the page.
+/// Unparsed instead of failing the page, and so does an answer without the list, which says nothing about what is there.
 let page (itemsKey: string) (item: JsonElement -> 'T) (e: JsonElement) : Page<'T> =
     let links = tryObject "links" e
 
@@ -41,8 +41,21 @@ let page (itemsKey: string) (item: JsonElement -> 'T) (e: JsonElement) : Page<'T
             with InvalidJson reason ->
                 Error { Reason = reason; Raw = i.GetRawText() })
 
+    let hasList =
+        e.ValueKind = JsonValueKind.Object
+        && (match e.TryGetProperty itemsKey with
+            | true, items -> items.ValueKind = JsonValueKind.Array
+            | _ -> false)
+
+    let noList =
+        if hasList then
+            []
+        else
+            let raw = if e.ValueKind = JsonValueKind.Undefined then "" else e.GetRawText()
+            [ { Reason = $"The answer has no {itemsKey} list"; Raw = raw } ]
+
     { Items = parsed |> List.choose (function Ok v -> Some v | Error _ -> None)
-      Unparsed = parsed |> List.choose (function Error u -> Some u | Ok _ -> None)
+      Unparsed = noList @ (parsed |> List.choose (function Error u -> Some u | Ok _ -> None))
       Next = links |> ValueOption.bind (tryString "next")
       Prev = links |> ValueOption.bind (tryString "prev") }
 

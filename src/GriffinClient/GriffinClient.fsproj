@@ -7,7 +7,7 @@
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <RootNamespace>Griffin</RootNamespace>
     <PackageId>GriffinClient</PackageId>
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
     <Authors>Tuomas Hietanen</Authors>
     <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
     <Description>For griffin.com. Unofficial .NET client for Griffin banking-as-a-service: onboarding (legal persons, claims, verifications), bank accounts, payees, payments, transactions, events, verified webhooks and request signing.</Description>
@@ -17,7 +17,10 @@
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
-    <PackageReleaseNotes>v1.2.1:
+    <PackageReleaseNotes>v1.2.2:
+- FIXED: Webhook.verify answers Expired for an expires outside the dates .NET holds, instead of throwing
+
+v1.2.1:
 - FIXED: StandingOrder.payAsync fails instead of paying again when the payments lookup answers without its list, when unsent copies of a reference are ambiguous, or when the reference belongs to a payment of another amount
 - FIXED: StandingOrder.payAsync prefers a submitted copy of a reference, and validate refuses a reference that starts or ends with a space
 - FIXED: StandingOrder.occurrences, nextDue and dueOccurrences refuse a frequency that never moves on, instead of hanging

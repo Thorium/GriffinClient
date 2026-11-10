@@ -137,6 +137,12 @@ let private componentValue (request: WebhookRequest) =
     | name when name.StartsWith("@", StringComparison.Ordinal) -> ValueNone
     | name -> headerOf request name
 
+/// The moment of a Unix time, or the nearest one a DateTimeOffset holds: the number is the sender's, of any size.
+let private momentOf (seconds: int64) =
+    let earliest = DateTimeOffset.MinValue.ToUnixTimeSeconds()
+    let latest = DateTimeOffset.MaxValue.ToUnixTimeSeconds()
+    DateTimeOffset.FromUnixTimeSeconds(max earliest (min latest seconds))
+
 let private verifyOne (keys: WebhookKey list) (request: WebhookRequest) (now: DateTimeOffset) (memberText: string) (signatureText: string) =
     result {
         let! parameters = MessageSignature.parseParams memberText |> Result.mapError MalformedSignature
@@ -155,7 +161,7 @@ let private verifyOne (keys: WebhookKey list) (request: WebhookRequest) (now: Da
         do!
             match parameters.Expires with
             | ValueNone -> Error NoExpiry
-            | ValueSome expires when now.ToUnixTimeSeconds() > expires -> Error(Expired(DateTimeOffset.FromUnixTimeSeconds expires))
+            | ValueSome expires when now.ToUnixTimeSeconds() > expires -> Error(Expired(momentOf expires))
             | ValueSome _ -> Ok()
 
         let! signatureBase =

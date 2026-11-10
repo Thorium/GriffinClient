@@ -371,3 +371,24 @@ let ``the published key set parses`` () : Task =
             Assert.Equal("P-521", k.Curve)
         | other -> failwith $"%A{other}"
     }
+
+[<Theory>]
+[<InlineData("-99999999999999")>]
+[<InlineData("-9223372036854775808")>]
+let ``an expires no date can hold is expired, and nothing is thrown`` (expires: string) =
+    let digest = MessageSignature.contentDigest Array.empty
+
+    let request: Webhook.WebhookRequest =
+        { Method = "POST"
+          Authority = "x"
+          Path = "/"
+          Query = ""
+          Headers =
+            [ "content-digest", digest
+              "signature-input", $"s=(\"content-digest\");expires={expires};keyid=\"{kid}\""
+              "signature", "s=:AAAA:" ]
+          Body = Array.empty }
+
+    match Webhook.verifyWithKeys [ jwk kid ] request now with
+    | Error(Expired at) -> Assert.Equal(DateTimeOffset.MinValue, at)
+    | other -> failwith $"%A{other}"

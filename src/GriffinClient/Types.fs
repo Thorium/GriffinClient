@@ -870,8 +870,8 @@ type ProductSchemes =
       FasterPaymentsOutbound: bool
       ChapsInbound: bool
       BacsDirectCreditsInbound: bool
-      /// Originators can collect Direct Debits from the account.
-      BacsDirectDebitsInbound: bool }
+      /// Originators can collect Direct Debits from accounts on the product (Griffin's bacs-direct-debits.paying).
+      BacsDirectDebitsPaying: bool }
 
 type BankProduct =
     { Url: string

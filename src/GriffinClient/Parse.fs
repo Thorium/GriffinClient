@@ -100,7 +100,7 @@ let private productSchemes (e: JsonElement) : ProductSchemes =
       FasterPaymentsOutbound = can "faster-payments" "outbound"
       ChapsInbound = can "chaps" "inbound"
       BacsDirectCreditsInbound = can "bacs-direct-credits" "inbound"
-      BacsDirectDebitsInbound = can "bacs-direct-debits" "inbound" }
+      BacsDirectDebitsPaying = can "bacs-direct-debits" "paying" }
 
 let bankProduct (e: JsonElement) : BankProduct =
     { Url = required "bank-account-product-url" tryString e

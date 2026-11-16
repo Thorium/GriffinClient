@@ -493,7 +493,7 @@ let ``only a 422 is a refusal`` () =
 let ``a product says what each scheme can do`` () : Task =
     task {
         let json =
-            """{"bank-account-product-url":"/bank/products/bp.1","display-name":"Current","bank-account-product-class":"embedded","bank-account-product-accounts-url":"/a","payment-schemes":{"faster-payments":{"inbound":true,"outbound":true},"chaps":{"inbound":true},"bacs-direct-credits":{"inbound":false},"bacs-direct-debits":{"inbound":true}}}"""
+            """{"bank-account-product-url":"/bank/products/bp.1","display-name":"Current","bank-account-product-class":"embedded","bank-account-product-accounts-url":"/a","payment-schemes":{"faster-payments":{"inbound":true,"outbound":true},"chaps":{"inbound":true},"bacs-direct-credits":{"inbound":false},"bacs-direct-debits":{"paying":true}}}"""
 
         use handler = new FakeGriffinHandler(fun _ _ _ -> ok json)
         let! product = Api.getBankProductAsync (clientWith handler) "/bank/products/bp.1" ct
@@ -503,7 +503,7 @@ let ``a product says what each scheme can do`` () : Task =
             Assert.True schemes.FasterPaymentsOutbound
             Assert.True schemes.ChapsInbound
             Assert.False schemes.BacsDirectCreditsInbound
-            Assert.True schemes.BacsDirectDebitsInbound
+            Assert.True schemes.BacsDirectDebitsPaying
         | other -> failwith $"%A{other}"
     }
 
